@@ -1,33 +1,70 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Class } from '../lib/supabase';
-import { BookOpen, Plus, ArrowLeft, Trash2 } from 'lucide-react';
+import { BookOpen, Plus, ArrowLeft, Trash2, LogOut } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
+import { useAuth } from '../contexts/AuthContext';
+import Toast from '../components/Toast';
 
-const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
+type ToastState = {
+  message: string;
+  type: 'success' | 'error';
+} | null;
 
 export default function ClassesPage() {
   const navigate = useNavigate();
+  const { user, signOut } = useAuth();
   const [classes, setClasses] = useState<Class[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [className, setClassName] = useState('');
   const [professor, setProfessor] = useState('');
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<ToastState>(null);
+  const [userName, setUserName] = useState<string>('Student');
 
   useEffect(() => {
     loadClasses();
-  }, []);
+    loadUserName();
+  }, [user]);
+
+  const loadUserName = async () => {
+    if (!user) return;
+
+    try {
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('first_name, last_name')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (profileData) {
+        setUserName(profileData.first_name);
+      }
+    } catch (error) {
+      console.error('Error loading user name:', error);
+    }
+  };
 
   const loadClasses = async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data } = await supabase
         .from('classes')
         .select('*')
-        .order('name');
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
 
       if (data) setClasses(data);
     } catch (error) {
       console.error('Error loading classes:', error);
+      setToast({
+        message: 'Failed to load classes. Please refresh the page.',
+        type: 'error',
+      });
     } finally {
       setLoading(false);
     }
@@ -37,22 +74,35 @@ export default function ClassesPage() {
     e.preventDefault();
     if (!className) return;
 
+    if (!user) {
+      setToast({
+        message: 'You must be logged in to create a class.',
+        type: 'error',
+      });
+      return;
+    }
+
     try {
-      const { data, error } = await supabase.from('classes').insert([
-        {
-          user_id: MOCK_USER_ID,
-          name: className,
-          professor: professor || '',
-        },
-      ]);
+      const { error } = await supabase.from('classes').insert({
+        user_id: user.id,
+        name: className,
+        professor: professor || null,
+      });
 
       if (error) {
         console.error('Supabase error:', error);
-        alert(`Error adding class: ${error.message}`);
+        setToast({
+          message: 'There was an issue creating your class. Please try again.',
+          type: 'error',
+        });
         throw error;
       }
 
-      console.log('Class added successfully:', data);
+      setToast({
+        message: '✅ Class created successfully.',
+        type: 'success',
+      });
+
       setClassName('');
       setProfessor('');
       setShowAddModal(false);
@@ -71,9 +121,18 @@ export default function ClassesPage() {
       const { error } = await supabase.from('classes').delete().eq('id', classId);
 
       if (error) throw error;
+
+      setToast({
+        message: 'Class deleted successfully.',
+        type: 'success',
+      });
+
       loadClasses();
     } catch (error) {
-      alert('Error deleting class');
+      setToast({
+        message: 'Error deleting class. Please try again.',
+        type: 'error',
+      });
       console.error(error);
     }
   };
@@ -88,22 +147,42 @@ export default function ClassesPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
       <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <button
-            onClick={() => navigate('dashboard')}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition"
-          >
-            <ArrowLeft className="w-5 h-5" />
-            Back to Dashboard
-          </button>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition"
-          >
-            <Plus className="w-5 h-5" />
-            Add Class
-          </button>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+          <div className="flex items-center justify-between mb-2">
+            <button
+              onClick={() => navigate('dashboard')}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              Back to Dashboard
+            </button>
+            <button
+              onClick={signOut}
+              className="flex items-center gap-2 px-3 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="text-sm font-medium">Sign Out</span>
+            </button>
+          </div>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-600">Welcome, {userName}</p>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition"
+            >
+              <Plus className="w-5 h-5" />
+              Add Class
+            </button>
+          </div>
         </div>
       </header>
 
