@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Lecture } from '../lib/supabase';
-import { ArrowLeft, Download, Mail, FileText, Lightbulb, BookOpen, HelpCircle, Presentation, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, Mail, Trash2, Sparkles } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
 import { useAuth } from '../contexts/AuthContext';
 import Toast from '../components/Toast';
@@ -11,12 +11,21 @@ type ToastState = {
   type: 'success' | 'error';
 } | null;
 
+function parseMaybeJson(value: any, fallback: any) {
+  if (!value) return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
 export default function LectureDetailPage({ lectureId }: { lectureId: string }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [lecture, setLecture] = useState<Lecture | null>(null);
   const [loading, setLoading] = useState(true);
-  const [slideCount, setSlideCount] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
 
@@ -37,9 +46,7 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
         },
         (payload) => {
           console.log('Lecture updated:', payload);
-          if (payload.new.processing_status === 'completed') {
-            loadLecture();
-          }
+          setLecture(payload.new as Lecture);
         }
       )
       .subscribe();
@@ -61,40 +68,7 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
         .maybeSingle();
 
       if (data) {
-        const parsedLecture = {
-          ...data,
-          key_points: Array.isArray(data.key_points)
-            ? data.key_points
-            : typeof data.key_points === 'string'
-            ? JSON.parse(data.key_points || '[]')
-            : data.key_points || [],
-          important_terms: typeof data.important_terms === 'object' && !Array.isArray(data.important_terms)
-            ? data.important_terms
-            : typeof data.important_terms === 'string'
-            ? JSON.parse(data.important_terms || '{}')
-            : data.important_terms || {},
-          exam_questions: Array.isArray(data.exam_questions)
-            ? data.exam_questions
-            : typeof data.exam_questions === 'string'
-            ? JSON.parse(data.exam_questions || '[]')
-            : data.exam_questions || [],
-          flashcards: Array.isArray(data.flashcards)
-            ? data.flashcards
-            : typeof data.flashcards === 'string'
-            ? JSON.parse(data.flashcards || '[]')
-            : data.flashcards || [],
-        };
-
-        setLecture(parsedLecture);
-
-        if (data.file_type === 'slides' || data.slide_count > 0) {
-          const { count } = await supabase
-            .from('slides')
-            .select('*', { count: 'exact', head: true })
-            .eq('lecture_id', lectureId);
-
-          setSlideCount(count || 0);
-        }
+        setLecture(data);
       }
     } catch (error) {
       console.error('Error loading lecture:', error);
@@ -111,12 +85,6 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
     alert('Email functionality would be implemented here');
   };
 
-  /**
-   * Handles deletion of the current lecture
-   * Confirms with user before proceeding with permanent deletion
-   * Deletes both the database record and associated storage files
-   * Redirects to dashboard after successful deletion
-   */
   const handleDeleteLecture = async () => {
     if (!lecture || !user) return;
 
@@ -199,6 +167,10 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
     );
   }
 
+  const keyPoints = parseMaybeJson(lecture.key_points, []);
+  const importantTerms = parseMaybeJson(lecture.important_terms, []);
+  const flashcards = parseMaybeJson(lecture.flashcards, []);
+
   return (
     <div className="min-h-screen bg-gray-50">
       {toast && (
@@ -208,7 +180,8 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
           onClose={() => setToast(null)}
         />
       )}
-      <header className="bg-white border-b border-gray-200">
+
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <button
             onClick={() => navigate('dashboard')}
@@ -218,15 +191,36 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
             Back to Dashboard
           </button>
           <div className="flex items-start justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">{lecture.title}</h1>
-              <p className="text-gray-600 mt-1">
-                {new Date(lecture.recording_date).toLocaleDateString('en-US', {
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}
-              </p>
+            <div className="flex-1">
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                {lecture.title || 'Untitled Lecture'}
+              </h1>
+              <div className="flex items-center gap-3">
+                <span
+                  className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium rounded-full ${
+                    lecture.processing_status === 'completed'
+                      ? 'bg-green-100 text-green-800'
+                      : lecture.processing_status === 'pending'
+                      ? 'bg-yellow-100 text-yellow-800'
+                      : lecture.processing_status === 'processing'
+                      ? 'bg-blue-100 text-blue-800'
+                      : 'bg-red-100 text-red-800'
+                  }`}
+                >
+                  {lecture.processing_status === 'completed' && '✓'}
+                  {lecture.processing_status === 'pending' && '⏳'}
+                  {lecture.processing_status === 'processing' && '⚙️'}
+                  {lecture.processing_status === 'failed' && '✕'}
+                  {lecture.processing_status || 'Unknown'}
+                </span>
+                <span className="text-sm text-gray-500">
+                  {new Date(lecture.recording_date || lecture.created_at).toLocaleDateString('en-US', {
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}
+                </span>
+              </div>
             </div>
             <div className="flex gap-2">
               <button
@@ -266,182 +260,160 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {slideCount > 0 && (
-          <div className="bg-gradient-to-r from-purple-500 to-purple-600 rounded-2xl shadow-lg p-8 mb-8 text-white">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center">
-                  <Presentation className="w-8 h-8" />
-                </div>
-                <div>
-                  <h3 className="text-2xl font-bold mb-1">Slide Presentation Available</h3>
-                  <p className="text-purple-100">
-                    {slideCount} slide{slideCount !== 1 ? 's' : ''} with interactive features
-                  </p>
-                </div>
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-6">
+          {lecture.processing_status === 'pending' || lecture.processing_status === 'processing' ? (
+            <div className="bg-white rounded-2xl shadow-md p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <Sparkles className="w-6 h-6 text-blue-600 animate-pulse" />
+                <h2 className="text-xl font-bold text-gray-900">
+                  {lecture.processing_status === 'processing' ? 'AI Analysis in Progress' : 'Waiting to Process'}
+                </h2>
               </div>
-              <button
-                onClick={() => navigate('slide-viewer', { id: lectureId })}
-                className="px-6 py-3 bg-white text-purple-600 rounded-lg font-semibold hover:bg-purple-50 transition-all shadow-lg"
-              >
-                View Slides
-              </button>
+              <div className="animate-pulse space-y-4">
+                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                <div className="h-4 bg-gray-200 rounded w-full"></div>
+                <div className="h-4 bg-gray-200 rounded w-5/6"></div>
+                <div className="h-4 bg-gray-200 rounded w-2/3"></div>
+                <div className="h-4 bg-gray-200 rounded w-4/5"></div>
+              </div>
+              <p className="mt-6 text-center text-gray-600">
+                {lecture.processing_status === 'processing'
+                  ? 'Your lecture is being analyzed by AI. This page will update automatically when complete.'
+                  : 'Your lecture is in the queue. Processing will begin shortly.'}
+              </p>
             </div>
-          </div>
-        )}
-
-        {lecture.processing_status !== 'completed' ? (
-          <div className="bg-white rounded-2xl shadow-md p-12 text-center">
-            {lecture.processing_status === 'processing' && (
-              <>
-                <div className="w-20 h-20 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
-                <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-sm font-medium mb-4">
-                  🟡 Processing
-                </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-3">AI Analysis in Progress</h3>
-                <p className="text-gray-600 max-w-md mx-auto">
-                  Your lecture is being analyzed by our AI. This page will automatically update when processing is complete.
-                </p>
-              </>
-            )}
-            {lecture.processing_status === 'failed' && (
-              <>
-                <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <FileText className="w-10 h-10 text-red-600" />
-                </div>
-                <div className="inline-flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 rounded-full text-sm font-medium mb-4">
-                  🔴 Failed
-                </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-3">Processing Failed</h3>
-                <p className="text-gray-600 max-w-md mx-auto mb-6">
-                  There was an error processing this lecture. Please try uploading again or contact support if the issue persists.
-                </p>
-                <button
-                  onClick={() => navigate('upload')}
-                  className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
-                >
-                  Upload New Lecture
-                </button>
-              </>
-            )}
-            {lecture.processing_status === 'pending' && (
-              <>
-                <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <FileText className="w-10 h-10 text-yellow-600" />
-                </div>
-                <div className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-100 text-yellow-700 rounded-full text-sm font-medium mb-4">
-                  🟡 Pending
-                </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-3">In Queue</h3>
-                <p className="text-gray-600 max-w-md mx-auto">
-                  Your lecture is waiting to be processed. We'll notify you when analysis begins.
-                </p>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-8">
-            {lecture.summary_overview && (
-              <div className="bg-white rounded-2xl shadow-md p-8">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <FileText className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <h2 className="text-xl font-bold text-gray-900">Overview</h2>
-                </div>
-                <p className="text-gray-700 leading-relaxed">{lecture.summary_overview}</p>
-              </div>
-            )}
-
-            {lecture.key_points && lecture.key_points.length > 0 && (
-              <div className="bg-white rounded-2xl shadow-md p-8">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                    <Lightbulb className="w-5 h-5 text-green-600" />
-                  </div>
-                  <h2 className="text-xl font-bold text-gray-900">Key Points</h2>
-                </div>
-                <ul className="space-y-3">
-                  {lecture.key_points.map((point, index) => (
-                    <li key={index} className="flex gap-3">
-                      <span className="flex-shrink-0 w-6 h-6 bg-green-100 rounded-full flex items-center justify-center text-green-700 text-sm font-medium">
-                        {index + 1}
-                      </span>
-                      <span className="text-gray-700 leading-relaxed">{point}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {lecture.important_terms &&
-              Object.keys(lecture.important_terms).length > 0 && (
+          ) : lecture.processing_status === 'completed' ? (
+            <>
+              {lecture.summary_overview && (
                 <div className="bg-white rounded-2xl shadow-md p-8">
-                  <div className="flex items-center gap-3 mb-6">
-                    <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                      <BookOpen className="w-5 h-5 text-purple-600" />
-                    </div>
-                    <h2 className="text-xl font-bold text-gray-900">Important Terms</h2>
-                  </div>
-                  <dl className="space-y-4">
-                    {Object.entries(lecture.important_terms).map(([term, definition]) => (
-                      <div key={term} className="border-l-4 border-purple-200 pl-4">
-                        <dt className="font-semibold text-gray-900 mb-1">{term}</dt>
-                        <dd className="text-gray-700">{definition}</dd>
-                      </div>
-                    ))}
-                  </dl>
+                  <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">
+                    <span className="text-2xl">🧾</span>
+                    <span>Summary Overview</span>
+                  </h2>
+                  <p className="text-gray-700 bg-gray-50 p-4 rounded-lg whitespace-pre-line leading-relaxed">
+                    {lecture.summary_overview}
+                  </p>
                 </div>
               )}
 
-            {lecture.exam_questions && lecture.exam_questions.length > 0 && (
-              <div className="bg-white rounded-2xl shadow-md p-8">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
-                    <HelpCircle className="w-5 h-5 text-orange-600" />
-                  </div>
-                  <h2 className="text-xl font-bold text-gray-900">Possible Exam Questions</h2>
+              {keyPoints.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-md p-8">
+                  <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">
+                    <span className="text-2xl">🔑</span>
+                    <span>Key Points</span>
+                  </h2>
+                  <ul className="space-y-3">
+                    {keyPoints.map((point: string, index: number) => (
+                      <li key={index} className="flex gap-3">
+                        <span className="flex-shrink-0 w-6 h-6 bg-green-100 rounded-full flex items-center justify-center text-green-700 text-sm font-medium mt-1">
+                          {index + 1}
+                        </span>
+                        <span className="text-gray-700 leading-relaxed">{point}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="space-y-4">
-                  {lecture.exam_questions.map((question, index) => (
-                    <li key={index} className="flex gap-3 p-4 bg-orange-50 rounded-lg">
-                      <span className="flex-shrink-0 w-6 h-6 bg-orange-200 rounded-full flex items-center justify-center text-orange-700 text-sm font-medium">
-                        Q{index + 1}
-                      </span>
-                      <span className="text-gray-800">{question}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+              )}
 
-            {lecture.flashcards && lecture.flashcards.length > 0 && (
-              <div className="bg-white rounded-2xl shadow-md p-8">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-                    <BookOpen className="w-5 h-5 text-indigo-600" />
+              {importantTerms.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-md p-8">
+                  <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">
+                    <span className="text-2xl">📘</span>
+                    <span>Important Terms</span>
+                  </h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {importantTerms.map((term: any, index: number) => (
+                      <div
+                        key={index}
+                        className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg border border-blue-100 hover:shadow-md transition"
+                      >
+                        <strong className="text-gray-900 text-lg block mb-2">
+                          {term.term || term.name || term.word}
+                        </strong>
+                        <p className="text-gray-700 text-sm leading-relaxed">
+                          {term.definition || term.def || term.description}
+                        </p>
+                      </div>
+                    ))}
                   </div>
-                  <h2 className="text-xl font-bold text-gray-900">Flashcards</h2>
                 </div>
-                <div className="grid md:grid-cols-2 gap-4">
-                  {lecture.flashcards.map((card: any, index: number) => (
-                    <div key={index} className="border-2 border-indigo-200 rounded-lg p-6 hover:border-indigo-400 transition">
-                      <div className="mb-4">
-                        <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">Question</span>
-                        <p className="text-gray-900 font-medium mt-1">{card.question || card.front || card.q}</p>
-                      </div>
-                      <div>
-                        <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">Answer</span>
-                        <p className="text-gray-700 mt-1">{card.answer || card.back || card.a}</p>
-                      </div>
-                    </div>
-                  ))}
+              )}
+
+              {flashcards.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-md p-8">
+                  <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">
+                    <span className="text-2xl">🧠</span>
+                    <span>Flashcards</span>
+                  </h2>
+                  <div className="space-y-3">
+                    {flashcards.map((card: any, index: number) => (
+                      <details
+                        key={index}
+                        className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-lg shadow-sm hover:shadow-md transition group"
+                      >
+                        <summary className="font-medium cursor-pointer text-gray-900 p-4 select-none list-none">
+                          <div className="flex items-start gap-3">
+                            <span className="flex-shrink-0 w-6 h-6 bg-purple-200 rounded-full flex items-center justify-center text-purple-700 text-xs font-bold">
+                              {index + 1}
+                            </span>
+                            <div className="flex-1">
+                              <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide block mb-1">
+                                Question
+                              </span>
+                              <p className="text-gray-900 font-medium">
+                                {card.front || card.question || card.q}
+                              </p>
+                            </div>
+                            <span className="text-purple-600 group-open:rotate-180 transition-transform">
+                              ▼
+                            </span>
+                          </div>
+                        </summary>
+                        <div className="px-4 pb-4 pt-2 border-t border-purple-100 mt-2">
+                          <span className="text-xs font-semibold text-purple-600 uppercase tracking-wide block mb-2">
+                            Answer
+                          </span>
+                          <p className="text-gray-700 leading-relaxed bg-white p-3 rounded">
+                            {card.back || card.answer || card.a}
+                          </p>
+                        </div>
+                      </details>
+                    ))}
+                  </div>
                 </div>
+              )}
+
+              {!lecture.summary_overview && keyPoints.length === 0 && importantTerms.length === 0 && flashcards.length === 0 && (
+                <div className="bg-white rounded-2xl shadow-md p-12 text-center">
+                  <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Sparkles className="w-8 h-8 text-gray-400" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No AI Analysis Yet</h3>
+                  <p className="text-gray-600">
+                    The AI analysis data will appear here once processing is complete.
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-md p-12 text-center">
+              <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <span className="text-4xl">✕</span>
               </div>
-            )}
-          </div>
-        )}
+              <h3 className="text-2xl font-bold text-gray-900 mb-3">Processing Failed</h3>
+              <p className="text-gray-600 max-w-md mx-auto mb-6">
+                There was an error processing this lecture. Please try uploading again or contact support if the issue persists.
+              </p>
+              <button
+                onClick={() => navigate('upload')}
+                className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+              >
+                Upload New Lecture
+              </button>
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );
