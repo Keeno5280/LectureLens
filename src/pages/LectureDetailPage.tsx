@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Lecture } from '../lib/supabase';
-import { ArrowLeft, Download, Mail, FileText, Lightbulb, BookOpen, HelpCircle, Presentation } from 'lucide-react';
+import { ArrowLeft, Download, Mail, FileText, Lightbulb, BookOpen, HelpCircle, Presentation, Trash2 } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
 import { useAuth } from '../contexts/AuthContext';
+import Toast from '../components/Toast';
+
+type ToastState = {
+  message: string;
+  type: 'success' | 'error';
+} | null;
 
 export default function LectureDetailPage({ lectureId }: { lectureId: string }) {
   const navigate = useNavigate();
@@ -11,6 +17,8 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
   const [lecture, setLecture] = useState<Lecture | null>(null);
   const [loading, setLoading] = useState(true);
   const [slideCount, setSlideCount] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [toast, setToast] = useState<ToastState>(null);
 
   useEffect(() => {
     loadLecture();
@@ -103,6 +111,67 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
     alert('Email functionality would be implemented here');
   };
 
+  /**
+   * Handles deletion of the current lecture
+   * Confirms with user before proceeding with permanent deletion
+   * Deletes both the database record and associated storage files
+   * Redirects to dashboard after successful deletion
+   */
+  const handleDeleteLecture = async () => {
+    if (!lecture || !user) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${lecture.title}"?\n\nThis action cannot be undone. All associated data including slides, notes, and AI analysis will be permanently deleted.`
+    );
+
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+
+    try {
+      if (lecture.file_url) {
+        const urlParts = lecture.file_url.split('/');
+        const fileName = urlParts[urlParts.length - 1];
+        const userId = urlParts[urlParts.length - 2];
+        const filePath = `${userId}/${fileName}`;
+
+        const { error: storageError } = await supabase.storage
+          .from('lecture-uploads')
+          .remove([filePath]);
+
+        if (storageError) {
+          console.warn('Storage deletion warning:', storageError);
+        }
+      }
+
+      const { error: deleteError } = await supabase
+        .from('lectures')
+        .delete()
+        .eq('id', lectureId)
+        .eq('user_id', user.id);
+
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      setToast({
+        message: 'Lecture deleted successfully. Redirecting...',
+        type: 'success',
+      });
+
+      setTimeout(() => {
+        navigate('dashboard');
+      }, 1500);
+    } catch (error) {
+      console.error('Error deleting lecture:', error);
+      setToast({
+        message: 'Failed to delete lecture. Please try again.',
+        type: 'error',
+      });
+      setIsDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -132,6 +201,13 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <button
@@ -166,6 +242,24 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
               >
                 <Mail className="w-4 h-4" />
                 Email
+              </button>
+              <button
+                onClick={handleDeleteLecture}
+                disabled={isDeleting}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Delete lecture"
+              >
+                {isDeleting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </>
+                )}
               </button>
             </div>
           </div>

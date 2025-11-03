@@ -1,16 +1,24 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Lecture } from '../lib/supabase';
-import { Upload, BookOpen, Clock, Brain, LogOut } from 'lucide-react';
+import { Upload, BookOpen, Clock, Brain, LogOut, Trash2 } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
 import { useAuth } from '../contexts/AuthContext';
 import SearchBar from '../components/SearchBar';
+import Toast from '../components/Toast';
+
+type ToastState = {
+  message: string;
+  type: 'success' | 'error';
+} | null;
 
 export default function Dashboard() {
   const [recentLectures, setRecentLectures] = useState<Lecture[]>([]);
   const [allLectures, setAllLectures] = useState<Lecture[]>([]);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState<string>('Student');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState>(null);
   const navigate = useNavigate();
   const { signOut, user } = useAuth();
 
@@ -85,6 +93,76 @@ export default function Dashboard() {
     });
   };
 
+  /**
+   * Handles deletion of a lecture
+   * @param lectureId - The unique identifier of the lecture to delete
+   * @param lectureTitle - The title of the lecture (for confirmation dialog)
+   * @param e - Mouse event to stop propagation
+   *
+   * Steps:
+   * 1. Show confirmation dialog to prevent accidental deletion
+   * 2. Delete associated file from Supabase Storage
+   * 3. Delete lecture record from database (cascades to related records)
+   * 4. Update UI to remove deleted lecture
+   * 5. Show success/error feedback
+   */
+  const handleDeleteLecture = async (lectureId: string, lectureTitle: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${lectureTitle}"?\n\nThis action cannot be undone. All associated data including slides, notes, and AI analysis will be permanently deleted.`
+    );
+
+    if (!confirmed) return;
+
+    setDeletingId(lectureId);
+
+    try {
+      const lectureToDelete = allLectures.find(l => l.id === lectureId);
+
+      if (lectureToDelete?.file_url) {
+        const urlParts = lectureToDelete.file_url.split('/');
+        const fileName = urlParts[urlParts.length - 1];
+        const userId = urlParts[urlParts.length - 2];
+        const filePath = `${userId}/${fileName}`;
+
+        const { error: storageError } = await supabase.storage
+          .from('lecture-uploads')
+          .remove([filePath]);
+
+        if (storageError) {
+          console.warn('Storage deletion warning:', storageError);
+        }
+      }
+
+      const { error: deleteError } = await supabase
+        .from('lectures')
+        .delete()
+        .eq('id', lectureId)
+        .eq('user_id', user?.id);
+
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      setAllLectures(prev => prev.filter(l => l.id !== lectureId));
+      setRecentLectures(prev => prev.filter(l => l.id !== lectureId));
+
+      setToast({
+        message: 'Lecture deleted successfully',
+        type: 'success',
+      });
+    } catch (error) {
+      console.error('Error deleting lecture:', error);
+      setToast({
+        message: 'Failed to delete lecture. Please try again.',
+        type: 'error',
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -95,6 +173,13 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <h1 className="text-2xl font-bold text-gray-900">
@@ -252,9 +337,23 @@ export default function Dashboard() {
                           year: 'numeric',
                         })}</span>
                       </div>
-                      <button className="text-blue-600 text-sm font-medium group-hover:underline">
-                        View Details →
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => handleDeleteLecture(lecture.id, lecture.title, e)}
+                          disabled={deletingId === lecture.id}
+                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Delete lecture"
+                        >
+                          {deletingId === lecture.id ? (
+                            <div className="w-4 h-4 border-2 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </button>
+                        <button className="text-blue-600 text-sm font-medium group-hover:underline">
+                          View Details →
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

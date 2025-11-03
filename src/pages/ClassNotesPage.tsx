@@ -1,14 +1,24 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Lecture, Class } from '../lib/supabase';
-import { ArrowLeft, FileText, Clock } from 'lucide-react';
+import { ArrowLeft, FileText, Clock, Trash2 } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
+import { useAuth } from '../contexts/AuthContext';
+import Toast from '../components/Toast';
+
+type ToastState = {
+  message: string;
+  type: 'success' | 'error';
+} | null;
 
 export default function ClassNotesPage({ classId }: { classId: string }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [classData, setClassData] = useState<Class | null>(null);
   const [lectures, setLectures] = useState<Lecture[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState>(null);
 
   useEffect(() => {
     loadData();
@@ -48,6 +58,68 @@ export default function ClassNotesPage({ classId }: { classId: string }) {
     });
   };
 
+  /**
+   * Handles deletion of a lecture from the class
+   * @param lectureId - Unique identifier of the lecture
+   * @param lectureTitle - Title of the lecture for confirmation
+   * @param e - Mouse event to prevent card click propagation
+   */
+  const handleDeleteLecture = async (lectureId: string, lectureTitle: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${lectureTitle}"?\n\nThis action cannot be undone. All associated data will be permanently deleted.`
+    );
+
+    if (!confirmed) return;
+
+    setDeletingId(lectureId);
+
+    try {
+      const lectureToDelete = lectures.find(l => l.id === lectureId);
+
+      if (lectureToDelete?.file_url) {
+        const urlParts = lectureToDelete.file_url.split('/');
+        const fileName = urlParts[urlParts.length - 1];
+        const userId = urlParts[urlParts.length - 2];
+        const filePath = `${userId}/${fileName}`;
+
+        const { error: storageError } = await supabase.storage
+          .from('lecture-uploads')
+          .remove([filePath]);
+
+        if (storageError) {
+          console.warn('Storage deletion warning:', storageError);
+        }
+      }
+
+      const { error: deleteError } = await supabase
+        .from('lectures')
+        .delete()
+        .eq('id', lectureId)
+        .eq('user_id', user?.id);
+
+      if (deleteError) {
+        throw deleteError;
+      }
+
+      setLectures(prev => prev.filter(l => l.id !== lectureId));
+
+      setToast({
+        message: 'Lecture deleted successfully',
+        type: 'success',
+      });
+    } catch (error) {
+      console.error('Error deleting lecture:', error);
+      setToast({
+        message: 'Failed to delete lecture. Please try again.',
+        type: 'error',
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -74,6 +146,13 @@ export default function ClassNotesPage({ classId }: { classId: string }) {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <button
@@ -125,7 +204,7 @@ export default function ClassNotesPage({ classId }: { classId: string }) {
                       <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
                         <FileText className="w-5 h-5 text-blue-600" />
                       </div>
-                      <div>
+                      <div className="flex-1">
                         <h3 className="text-lg font-semibold text-gray-900">{lecture.title}</h3>
                         <div className="flex items-center gap-2 text-sm text-gray-500">
                           <Clock className="w-4 h-4" />
@@ -139,7 +218,7 @@ export default function ClassNotesPage({ classId }: { classId: string }) {
                       </p>
                     )}
                   </div>
-                  <div>
+                  <div className="flex items-center gap-3">
                     <span
                       className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
                         lecture.processing_status === 'completed'
@@ -153,6 +232,18 @@ export default function ClassNotesPage({ classId }: { classId: string }) {
                     >
                       {lecture.processing_status}
                     </span>
+                    <button
+                      onClick={(e) => handleDeleteLecture(lecture.id, lecture.title, e)}
+                      disabled={deletingId === lecture.id}
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Delete lecture"
+                    >
+                      {deletingId === lecture.id ? (
+                        <div className="w-5 h-5 border-2 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+                      ) : (
+                        <Trash2 className="w-5 h-5" />
+                      )}
+                    </button>
                   </div>
                 </div>
               </div>
