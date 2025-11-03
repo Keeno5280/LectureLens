@@ -15,28 +15,55 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadData();
+
+    if (!user) return;
+
+    const channel = supabase
+      .channel('lectures-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'lectures',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          console.log('Lecture update received:', payload);
+          loadData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const loadData = async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data: lecturesData } = await supabase
         .from('lectures')
         .select('*')
+        .eq('user_id', user.id)
         .order('recording_date', { ascending: false })
         .limit(5);
 
       if (lecturesData) setRecentLectures(lecturesData);
 
-      if (user) {
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('first_name, last_name')
-          .eq('id', user.id)
-          .maybeSingle();
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('first_name, last_name')
+        .eq('id', user.id)
+        .maybeSingle();
 
-        if (profileData) {
-          setUserName(profileData.first_name);
-        }
+      if (profileData) {
+        setUserName(profileData.first_name);
       }
     } catch (error) {
       console.error('Error loading data:', error);
@@ -164,9 +191,19 @@ export default function Dashboard() {
                       <h3 className="text-lg font-semibold text-gray-900 mb-2">
                         {lecture.title}
                       </h3>
-                      {lecture.summary_overview && (
+                      {lecture.summary_overview && lecture.processing_status === 'completed' && (
                         <p className="text-gray-600 text-sm line-clamp-2 mb-3">
                           {lecture.summary_overview}
+                        </p>
+                      )}
+                      {lecture.processing_status === 'completed' && (
+                        <p className="text-green-600 text-sm font-medium mb-2">
+                          ✅ AI Analysis Complete
+                        </p>
+                      )}
+                      {lecture.processing_status === 'processing' && (
+                        <p className="text-blue-600 text-sm font-medium mb-2">
+                          ⏳ AI processing in progress...
                         </p>
                       )}
                       <div className="flex items-center gap-2 text-sm text-gray-500">
@@ -180,7 +217,7 @@ export default function Dashboard() {
                           lecture.processing_status === 'completed'
                             ? 'bg-green-100 text-green-700'
                             : lecture.processing_status === 'processing'
-                            ? 'bg-blue-100 text-blue-700'
+                            ? 'bg-blue-100 text-blue-700 animate-pulse'
                             : lecture.processing_status === 'failed'
                             ? 'bg-red-100 text-red-700'
                             : 'bg-yellow-100 text-yellow-700'

@@ -2,11 +2,17 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Upload, Mic, ArrowLeft, Check, Presentation } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
+import { useAuth } from '../contexts/AuthContext';
+import Toast from '../components/Toast';
 
-const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
+type ToastState = {
+  message: string;
+  type: 'success' | 'error';
+} | null;
 
 export default function UploadPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
@@ -15,15 +21,21 @@ export default function UploadPage() {
   const [title, setTitle] = useState('');
   const [classId, setClassId] = useState('');
   const [classes, setClasses] = useState<Array<{ id: string; name: string }>>([]);
+  const [toast, setToast] = useState<ToastState>(null);
 
   useEffect(() => {
-    loadClasses();
-  }, []);
+    if (user) {
+      loadClasses();
+    }
+  }, [user]);
 
   const loadClasses = async () => {
+    if (!user) return;
+
     const { data } = await supabase
       .from('classes')
       .select('id, name')
+      .eq('user_id', user.id)
       .order('name');
 
     if (data) setClasses(data);
@@ -63,51 +75,89 @@ export default function UploadPage() {
 
   const handleFileUpload = async (file: File) => {
     if (!title || !classId) {
-      alert('Please enter a title and select a class');
+      setToast({
+        message: 'Please enter a title and select a class',
+        type: 'error',
+      });
+      return;
+    }
+
+    if (!user) {
+      setToast({
+        message: 'You must be logged in to upload lectures',
+        type: 'error',
+      });
       return;
     }
 
     setProcessing(true);
 
     try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+      const filePath = `${user.id}/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('lecture-uploads')
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        throw new Error('Failed to upload file to storage');
+      }
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('lecture-uploads')
+        .getPublicUrl(filePath);
+
+      const fileType = file.type.startsWith('audio/') ? 'audio' :
+                       file.type.startsWith('video/') ? 'video' : 'slides';
+
       const { data: lecture, error: insertError } = await supabase
         .from('lectures')
-        .insert([
-          {
-            user_id: MOCK_USER_ID,
-            class_id: classId,
-            title,
-            processing_status: 'processing',
-            file_url: '',
-          },
-        ])
+        .insert({
+          user_id: user.id,
+          class_id: classId,
+          title,
+          file_url: publicUrl,
+          file_type: fileType,
+          processing_status: 'pending',
+        })
         .select()
         .single();
 
       if (insertError) throw insertError;
 
-      const webhookUrl = 'https://your-n8n-webhook-url.com/webhook/lecture-upload';
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('lectureId', lecture.id);
-      formData.append('userId', MOCK_USER_ID);
+      const webhookUrl = 'https://n8n-e2ph.onrender.com/webhook/5f34c729-47b8-4f87-9323-f7462f7cfd7c';
 
       fetch(webhookUrl, {
         method: 'POST',
-        body: formData,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(lecture),
       }).catch((err) => {
         console.error('Webhook error:', err);
       });
 
       setSuccess(true);
+      setToast({
+        message: '✅ Lecture uploaded! Processing will begin shortly.',
+        type: 'success',
+      });
+
       setTimeout(() => {
         navigate('dashboard');
       }, 2000);
     } catch (error) {
-      alert('Error uploading lecture');
-      console.error(error);
-    } finally {
+      console.error('Upload error:', error);
+      setToast({
+        message: 'Error uploading lecture. Please try again.',
+        type: 'error',
+      });
       setProcessing(false);
     }
   };
@@ -155,6 +205,13 @@ export default function UploadPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <button

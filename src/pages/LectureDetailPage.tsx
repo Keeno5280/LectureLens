@@ -3,25 +3,53 @@ import { supabase } from '../lib/supabase';
 import type { Lecture } from '../lib/supabase';
 import { ArrowLeft, Download, Mail, FileText, Lightbulb, BookOpen, HelpCircle, Presentation } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function LectureDetailPage({ lectureId }: { lectureId: string }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [lecture, setLecture] = useState<Lecture | null>(null);
   const [loading, setLoading] = useState(true);
   const [slideCount, setSlideCount] = useState(0);
 
   useEffect(() => {
     loadLecture();
-  }, [lectureId]);
+
+    if (!lectureId || !user) return;
+
+    const channel = supabase
+      .channel(`lecture-${lectureId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'lectures',
+          filter: `id=eq.${lectureId}`,
+        },
+        (payload) => {
+          console.log('Lecture updated:', payload);
+          if (payload.new.processing_status === 'completed') {
+            loadLecture();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [lectureId, user]);
 
   const loadLecture = async () => {
-    if (!lectureId) return;
+    if (!lectureId || !user) return;
 
     try {
       const { data } = await supabase
         .from('lectures')
         .select('*')
         .eq('id', lectureId)
+        .eq('user_id', user.id)
         .maybeSingle();
 
       if (data) {
