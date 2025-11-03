@@ -9,12 +9,13 @@ import SearchBar from '../components/SearchBar';
 export default function Dashboard() {
   const [recentLectures, setRecentLectures] = useState<Lecture[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userName, setUserName] = useState<string>('Student');
   const navigate = useNavigate();
   const { signOut, user } = useAuth();
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [user]);
 
   const loadData = async () => {
     try {
@@ -25,6 +26,18 @@ export default function Dashboard() {
         .limit(5);
 
       if (lecturesData) setRecentLectures(lecturesData);
+
+      if (user) {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('first_name, last_name')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (profileData) {
+          setUserName(profileData.first_name);
+        }
+      }
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -55,7 +68,7 @@ export default function Dashboard() {
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <h1 className="text-2xl font-bold text-gray-900">
-            Welcome, {user?.email?.split('@')[0] || 'Student'}
+            Welcome, {userName}
           </h1>
           <button
             onClick={signOut}
