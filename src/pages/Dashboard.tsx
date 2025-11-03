@@ -8,6 +8,7 @@ import SearchBar from '../components/SearchBar';
 
 export default function Dashboard() {
   const [recentLectures, setRecentLectures] = useState<Lecture[]>([]);
+  const [allLectures, setAllLectures] = useState<Lecture[]>([]);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState<string>('Student');
   const navigate = useNavigate();
@@ -49,12 +50,14 @@ export default function Dashboard() {
     try {
       const { data: lecturesData } = await supabase
         .from('lectures')
-        .select('*')
+        .select('id, title, processing_status, summary_overview, created_at, recording_date, file_type')
         .eq('user_id', user.id)
-        .order('recording_date', { ascending: false })
-        .limit(5);
+        .order('created_at', { ascending: false });
 
-      if (lecturesData) setRecentLectures(lecturesData);
+      if (lecturesData) {
+        setAllLectures(lecturesData);
+        setRecentLectures(lecturesData.slice(0, 5));
+      }
 
       const { data: profileData } = await supabase
         .from('profiles')
@@ -159,9 +162,14 @@ export default function Dashboard() {
           </button>
         </div>
 
-        <div>
-          <h2 className="text-xl font-bold text-gray-900 mb-6">Recent Lectures</h2>
-          {recentLectures.length === 0 ? (
+        <div className="mb-12">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-gray-900">My Lectures</h2>
+            <div className="text-sm text-gray-600">
+              {allLectures.length} total lecture{allLectures.length !== 1 ? 's' : ''}
+            </div>
+          </div>
+          {allLectures.length === 0 ? (
             <div className="bg-white rounded-2xl shadow-md p-12 text-center">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <BookOpen className="w-8 h-8 text-gray-400" />
@@ -179,41 +187,17 @@ export default function Dashboard() {
               </button>
             </div>
           ) : (
-            <div className="grid gap-4">
-              {recentLectures.map((lecture) => (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {allLectures.map((lecture) => (
                 <div
                   key={lecture.id}
-                  className="bg-white rounded-xl shadow-md p-6 hover:shadow-lg transition cursor-pointer"
+                  className="bg-white rounded-xl shadow-md hover:shadow-xl transition cursor-pointer group overflow-hidden flex flex-col"
                   onClick={() => navigate('lecture', lecture.id)}
                 >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                        {lecture.title}
-                      </h3>
-                      {lecture.summary_overview && lecture.processing_status === 'completed' && (
-                        <p className="text-gray-600 text-sm line-clamp-2 mb-3">
-                          {lecture.summary_overview}
-                        </p>
-                      )}
-                      {lecture.processing_status === 'completed' && (
-                        <p className="text-green-600 text-sm font-medium mb-2">
-                          ✅ AI Analysis Complete
-                        </p>
-                      )}
-                      {lecture.processing_status === 'processing' && (
-                        <p className="text-blue-600 text-sm font-medium mb-2">
-                          ⏳ AI processing in progress...
-                        </p>
-                      )}
-                      <div className="flex items-center gap-2 text-sm text-gray-500">
-                        <Clock className="w-4 h-4" />
-                        {formatDate(lecture.recording_date)}
-                      </div>
-                    </div>
-                    <div>
+                  <div className="p-6 flex-1 flex flex-col">
+                    <div className="flex items-start justify-between mb-3">
                       <span
-                        className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
+                        className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${
                           lecture.processing_status === 'completed'
                             ? 'bg-green-100 text-green-700'
                             : lecture.processing_status === 'processing'
@@ -223,8 +207,54 @@ export default function Dashboard() {
                             : 'bg-yellow-100 text-yellow-700'
                         }`}
                       >
+                        {lecture.processing_status === 'completed' ? '🟢' :
+                         lecture.processing_status === 'processing' ? '🟡' :
+                         lecture.processing_status === 'failed' ? '🔴' : '🟡'}
                         {lecture.processing_status}
                       </span>
+                    </div>
+
+                    <h3 className="text-lg font-bold text-gray-900 mb-3 line-clamp-2 group-hover:text-blue-600 transition">
+                      {lecture.title}
+                    </h3>
+
+                    {lecture.processing_status === 'completed' && lecture.summary_overview && (
+                      <p className="text-gray-600 text-sm line-clamp-3 mb-4 flex-1">
+                        {lecture.summary_overview}
+                      </p>
+                    )}
+
+                    {lecture.processing_status === 'processing' && (
+                      <div className="flex items-center gap-2 text-blue-600 text-sm mb-4">
+                        <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                        <span>Processing...</span>
+                      </div>
+                    )}
+
+                    {lecture.processing_status === 'pending' && (
+                      <p className="text-yellow-600 text-sm mb-4">
+                        Waiting to be processed
+                      </p>
+                    )}
+
+                    {lecture.processing_status === 'failed' && (
+                      <p className="text-red-600 text-sm mb-4">
+                        Processing failed
+                      </p>
+                    )}
+
+                    <div className="flex items-center justify-between mt-auto pt-4 border-t border-gray-100">
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <Clock className="w-4 h-4" />
+                        <span>{new Date(lecture.created_at).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}</span>
+                      </div>
+                      <button className="text-blue-600 text-sm font-medium group-hover:underline">
+                        View Details →
+                      </button>
                     </div>
                   </div>
                 </div>

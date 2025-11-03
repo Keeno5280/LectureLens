@@ -53,7 +53,31 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
         .maybeSingle();
 
       if (data) {
-        setLecture(data);
+        const parsedLecture = {
+          ...data,
+          key_points: Array.isArray(data.key_points)
+            ? data.key_points
+            : typeof data.key_points === 'string'
+            ? JSON.parse(data.key_points || '[]')
+            : data.key_points || [],
+          important_terms: typeof data.important_terms === 'object' && !Array.isArray(data.important_terms)
+            ? data.important_terms
+            : typeof data.important_terms === 'string'
+            ? JSON.parse(data.important_terms || '{}')
+            : data.important_terms || {},
+          exam_questions: Array.isArray(data.exam_questions)
+            ? data.exam_questions
+            : typeof data.exam_questions === 'string'
+            ? JSON.parse(data.exam_questions || '[]')
+            : data.exam_questions || [],
+          flashcards: Array.isArray(data.flashcards)
+            ? data.flashcards
+            : typeof data.flashcards === 'string'
+            ? JSON.parse(data.flashcards || '[]')
+            : data.flashcards || [],
+        };
+
+        setLecture(parsedLecture);
 
         if (data.file_type === 'slides' || data.slide_count > 0) {
           const { count } = await supabase
@@ -82,7 +106,10 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-600">Loading...</div>
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 font-medium">Loading lecture details...</p>
+        </div>
       </div>
     );
   }
@@ -174,29 +201,48 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
           <div className="bg-white rounded-2xl shadow-md p-12 text-center">
             {lecture.processing_status === 'processing' && (
               <>
-                <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Processing...</h3>
-                <p className="text-gray-600">Your lecture is being analyzed. Check back soon!</p>
+                <div className="w-20 h-20 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-sm font-medium mb-4">
+                  🟡 Processing
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900 mb-3">AI Analysis in Progress</h3>
+                <p className="text-gray-600 max-w-md mx-auto">
+                  Your lecture is being analyzed by our AI. This page will automatically update when processing is complete.
+                </p>
               </>
             )}
             {lecture.processing_status === 'failed' && (
               <>
-                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <FileText className="w-8 h-8 text-red-600" />
+                <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <FileText className="w-10 h-10 text-red-600" />
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Processing Failed</h3>
-                <p className="text-gray-600">
-                  There was an error processing this lecture. Please try uploading again.
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 rounded-full text-sm font-medium mb-4">
+                  🔴 Failed
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900 mb-3">Processing Failed</h3>
+                <p className="text-gray-600 max-w-md mx-auto mb-6">
+                  There was an error processing this lecture. Please try uploading again or contact support if the issue persists.
                 </p>
+                <button
+                  onClick={() => navigate('upload')}
+                  className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+                >
+                  Upload New Lecture
+                </button>
               </>
             )}
             {lecture.processing_status === 'pending' && (
               <>
-                <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <FileText className="w-8 h-8 text-yellow-600" />
+                <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <FileText className="w-10 h-10 text-yellow-600" />
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">Pending</h3>
-                <p className="text-gray-600">Your lecture is in the queue for processing.</p>
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-100 text-yellow-700 rounded-full text-sm font-medium mb-4">
+                  🟡 Pending
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900 mb-3">In Queue</h3>
+                <p className="text-gray-600 max-w-md mx-auto">
+                  Your lecture is waiting to be processed. We'll notify you when analysis begins.
+                </p>
               </>
             )}
           </div>
@@ -273,6 +319,31 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {lecture.flashcards && lecture.flashcards.length > 0 && (
+              <div className="bg-white rounded-2xl shadow-md p-8">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                    <BookOpen className="w-5 h-5 text-indigo-600" />
+                  </div>
+                  <h2 className="text-xl font-bold text-gray-900">Flashcards</h2>
+                </div>
+                <div className="grid md:grid-cols-2 gap-4">
+                  {lecture.flashcards.map((card: any, index: number) => (
+                    <div key={index} className="border-2 border-indigo-200 rounded-lg p-6 hover:border-indigo-400 transition">
+                      <div className="mb-4">
+                        <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">Question</span>
+                        <p className="text-gray-900 font-medium mt-1">{card.question || card.front || card.q}</p>
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">Answer</span>
+                        <p className="text-gray-700 mt-1">{card.answer || card.back || card.a}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
