@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Lecture } from '../lib/supabase';
-import { Upload, BookOpen, Clock, Brain } from 'lucide-react';
+import { Upload, BookOpen, Clock, Brain, LogOut } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
+import { useAuth } from '../contexts/AuthContext';
 import SearchBar from '../components/SearchBar';
 
 export default function Dashboard() {
   const [recentLectures, setRecentLectures] = useState<Lecture[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+  const { signOut, user } = useAuth();
 
   useEffect(() => {
     loadData();
@@ -53,8 +55,15 @@ export default function Dashboard() {
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <h1 className="text-2xl font-bold text-gray-900">
-            Welcome, Student
+            Welcome, {user?.email?.split('@')[0] || 'Student'}
           </h1>
+          <button
+            onClick={signOut}
+            className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+          >
+            <LogOut className="w-5 h-5" />
+            <span className="font-medium">Sign Out</span>
+          </button>
         </div>
       </header>
 
