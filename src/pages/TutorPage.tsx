@@ -239,6 +239,7 @@ export default function TutorPage() {
         .insert({
           user_id: MOCK_USER_ID,
           title: 'New Conversation',
+          class_id: selectedClassId || null,
           context_lectures: JSON.stringify([]),
           context_slides: JSON.stringify([]),
         })
@@ -280,13 +281,17 @@ export default function TutorPage() {
         'Content-Type': 'application/json',
       };
 
+      const requestBody = {
+        question: userMessage,
+        class_id: selectedClassId || '',
+      };
+
+      console.log('Sending to API:', requestBody);
+
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          question: userMessage,
-          class_id: selectedClassId || '',
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) throw new Error('The AI tutor failed to respond');
