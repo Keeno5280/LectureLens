@@ -285,7 +285,7 @@ export default function TutorPage() {
         headers,
         body: JSON.stringify({
           question: userMessage,
-          class_id: selectedClassId || null,
+          class_id: selectedClassId || '',
         }),
       });
 
