@@ -254,48 +254,37 @@ export default function TutorPage() {
     setIsTyping(true);
 
     try {
-      const userMsgData = {
-        id: crypto.randomUUID(),
-        conversation_id: currentConversation.id,
-        role: 'user',
-        content: userMessage,
-        created_at: new Date().toISOString(),
-      };
-
-      await supabase.from('tutor_messages').insert(userMsgData);
-      setMessages([...messages, userMsgData as Message]);
-
-      const apiUrl = 'https://n8n-e2ph.onrender.com/webhook/4109c225-7faa-4672-80a6-57c05e383026';
+      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-tutor`;
       const headers = {
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
         'Content-Type': 'application/json',
       };
+
+      const lectureContext = selectedContext.filter((id) =>
+        availableContext.find((c) => c.id === id && c.type === 'lecture')
+      );
 
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          question: userMessage,
-          class_id: selectedClassId || null,
+          conversationId: currentConversation.id,
+          message: userMessage,
+          queryType,
+          complexityLevel,
+          contextLectures: lectureContext,
+          contextSlides: [],
         }),
       });
 
-      if (!response.ok) throw new Error('The AI tutor failed to respond');
+      if (!response.ok) throw new Error('Failed to get response');
 
       const result = await response.json();
 
-      const assistantMsgData = {
-        id: crypto.randomUUID(),
-        conversation_id: currentConversation.id,
-        role: 'assistant',
-        content: result.answer || 'No response received',
-        created_at: new Date().toISOString(),
-      };
-
-      await supabase.from('tutor_messages').insert(assistantMsgData);
-      setMessages((prev) => [...prev, assistantMsgData as Message]);
+      await loadMessages(currentConversation.id);
     } catch (error) {
       console.error('Error sending message:', error);
-      alert('The AI tutor failed to respond');
+      alert('Failed to send message. Please try again.');
     } finally {
       setIsTyping(false);
     }
