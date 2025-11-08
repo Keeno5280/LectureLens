@@ -119,7 +119,6 @@ export default function TutorPage() {
       const { data, error } = await supabase
         .from('classes')
         .select('id, name, professor')
-        .eq('user_id', MOCK_USER_ID)
         .order('name');
 
       if (error) throw error;
@@ -180,16 +179,15 @@ export default function TutorPage() {
 
   const loadAvailableContext = async () => {
     try {
-      const query = supabase
+      let query = supabase
         .from('lectures')
-        .select('id, title, recording_date')
-        .eq('user_id', MOCK_USER_ID)
+        .select('id, title, recording_date, class_id')
         .eq('processing_status', 'completed')
         .order('recording_date', { ascending: false })
         .limit(20);
 
       if (selectedClassId) {
-        query.eq('class_id', selectedClassId);
+        query = query.eq('class_id', selectedClassId);
       }
 
       const [lecturesRes, slidesRes] = await Promise.all([
