@@ -151,7 +151,12 @@ export default function TutorPage() {
         setCurrentConversation(data[0]);
       } else {
         setConversations([]);
-        setCurrentConversation(null);
+        // Auto-create a new conversation if none exist for this class
+        if (selectedClassId) {
+          await createNewConversation();
+        } else {
+          setCurrentConversation(null);
+        }
       }
     } catch (error) {
       console.error('Error loading conversations:', error);
