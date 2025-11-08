@@ -95,6 +95,8 @@ export default function TutorPage() {
   }, [messages]);
 
   useEffect(() => {
+    // Clear messages when switching classes to show fresh chat
+    setMessages([]);
     loadAvailableContext();
     loadConversations();
   }, [selectedClassId]);
