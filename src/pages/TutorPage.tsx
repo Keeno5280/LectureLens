@@ -51,6 +51,12 @@ interface ContextItem {
   subtitle?: string;
 }
 
+interface ClassOption {
+  id: string;
+  name: string;
+  professor: string;
+}
+
 export default function TutorPage() {
   const navigate = useNavigate();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -66,6 +72,10 @@ export default function TutorPage() {
   const [selectedMessageForSave, setSelectedMessageForSave] = useState<Message | null>(null);
   const [saveTitle, setSaveTitle] = useState('');
   const [saveCategory, setSaveCategory] = useState<'note' | 'flashcard' | 'summary'>('note');
+  const [classes, setClasses] = useState<ClassOption[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const [isLoadingClasses, setIsLoadingClasses] = useState(false);
+  const [classesError, setClassesError] = useState<string>('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -84,6 +94,10 @@ export default function TutorPage() {
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => {
+    loadAvailableContext();
+  }, [selectedClassId]);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -93,7 +107,30 @@ export default function TutorPage() {
       loadConversations(),
       loadQuickActions(),
       loadAvailableContext(),
+      loadClasses(),
     ]);
+  };
+
+  const loadClasses = async () => {
+    setIsLoadingClasses(true);
+    setClassesError('');
+
+    try {
+      const { data, error } = await supabase
+        .from('classes')
+        .select('id, name, professor')
+        .eq('user_id', MOCK_USER_ID)
+        .order('name');
+
+      if (error) throw error;
+
+      setClasses(data || []);
+    } catch (error) {
+      console.error('Error loading classes:', error);
+      setClassesError('Failed to load classes');
+    } finally {
+      setIsLoadingClasses(false);
+    }
   };
 
   const loadConversations = async () => {
@@ -143,14 +180,20 @@ export default function TutorPage() {
 
   const loadAvailableContext = async () => {
     try {
+      const query = supabase
+        .from('lectures')
+        .select('id, title, recording_date')
+        .eq('user_id', MOCK_USER_ID)
+        .eq('processing_status', 'completed')
+        .order('recording_date', { ascending: false })
+        .limit(20);
+
+      if (selectedClassId) {
+        query.eq('class_id', selectedClassId);
+      }
+
       const [lecturesRes, slidesRes] = await Promise.all([
-        supabase
-          .from('lectures')
-          .select('id, title, recording_date')
-          .eq('user_id', MOCK_USER_ID)
-          .eq('processing_status', 'completed')
-          .order('recording_date', { ascending: false })
-          .limit(20),
+        query,
         supabase
           .from('slides')
           .select('id, slide_number, summary, lecture_id, lectures(title)')
@@ -382,10 +425,42 @@ export default function TutorPage() {
         {currentConversation ? (
           <>
             <div className="bg-white border-b border-slate-200 px-6 py-4">
-              <h1 className="text-xl font-bold text-slate-800">{currentConversation.title}</h1>
-              <p className="text-sm text-slate-500 mt-1">
-                Ask me anything about your uploaded materials
-              </p>
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <h1 className="text-xl font-bold text-slate-800">{currentConversation.title}</h1>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Ask me anything about your uploaded materials
+                  </p>
+                </div>
+                <div className="ml-6">
+                  <label className="block text-xs font-medium text-slate-600 mb-2">
+                    Filter by Class
+                  </label>
+                  {isLoadingClasses ? (
+                    <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading...
+                    </div>
+                  ) : classesError ? (
+                    <div className="px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                      {classesError}
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedClassId}
+                      onChange={(e) => setSelectedClassId(e.target.value)}
+                      className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[200px] cursor-pointer hover:border-slate-400 transition-colors"
+                    >
+                      <option value="">All Classes</option>
+                      {classes.map((cls) => (
+                        <option key={cls.id} value={cls.id}>
+                          {cls.name} - {cls.professor}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-6">
