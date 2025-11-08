@@ -33,7 +33,7 @@ interface Conversation {
 interface Class {
   id: string;
   name: string;
-  professor: string;
+  code: string;
 }
 
 type ToastState = {
@@ -118,7 +118,7 @@ export default function TutorPage() {
     try {
       const { data, error } = await supabase
         .from('classes')
-        .select('id, name, professor')
+        .select('id, name, code')
         .eq('user_id', user.id)
         .order('name');
 
@@ -473,7 +473,7 @@ export default function TutorPage() {
                 >
                   {classes.map((cls) => (
                     <option key={cls.id} value={cls.id}>
-                      {cls.name}
+                      {cls.code} - {cls.name}
                     </option>
                   ))}
                 </select>
