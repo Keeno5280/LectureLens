@@ -96,6 +96,7 @@ export default function TutorPage() {
 
   useEffect(() => {
     loadAvailableContext();
+    loadConversations();
   }, [selectedClassId]);
 
   const scrollToBottom = () => {
@@ -134,15 +135,23 @@ export default function TutorPage() {
 
   const loadConversations = async () => {
     try {
-      const { data } = await supabase
+      let query = supabase
         .from('tutor_conversations')
         .select('*')
-        .eq('user_id', MOCK_USER_ID)
-        .order('updated_at', { ascending: false });
+        .eq('user_id', MOCK_USER_ID);
+
+      if (selectedClassId) {
+        query = query.eq('class_id', selectedClassId);
+      }
+
+      const { data } = await query.order('updated_at', { ascending: false });
 
       if (data && data.length > 0) {
         setConversations(data);
         setCurrentConversation(data[0]);
+      } else {
+        setConversations([]);
+        setCurrentConversation(null);
       }
     } catch (error) {
       console.error('Error loading conversations:', error);
