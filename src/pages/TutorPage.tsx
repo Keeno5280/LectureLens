@@ -281,10 +281,21 @@ export default function TutorPage() {
         'Content-Type': 'application/json',
       };
 
-      const requestBody = {
+      // Validate selectedClassId is a valid UUID format (8-4-4-4-12 hex characters)
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const isValidUUID = selectedClassId && uuidRegex.test(selectedClassId);
+
+      // Build request body - only include class_id if it's a valid UUID
+      // Never send empty string as Supabase expects null or valid UUID
+      const requestBody: { question: string; class_id?: string | null } = {
         question: userMessage,
-        class_id: selectedClassId || '',
       };
+
+      if (isValidUUID) {
+        requestBody.class_id = selectedClassId;
+      } else {
+        requestBody.class_id = null;
+      }
 
       console.log('Sending to API:', requestBody);
 
