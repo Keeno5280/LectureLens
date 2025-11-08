@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Lecture } from '../lib/supabase';
-import { ArrowLeft, Download, Mail, Trash2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Download, Mail, Trash2, Sparkles, RefreshCw } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
 import { useAuth } from '../contexts/AuthContext';
 import Toast from '../components/Toast';
@@ -28,14 +28,22 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
   const [loading, setLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     loadLecture();
 
     if (!lectureId || !user) return;
 
+    console.log('🔌 Setting up Realtime subscription for lecture:', lectureId);
+
     const channel = supabase
-      .channel(`lecture-${lectureId}`)
+      .channel(`lecture-${lectureId}`, {
+        config: {
+          broadcast: { self: true },
+        },
+      })
       .on(
         'postgres_changes',
         {
@@ -45,33 +53,112 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
           filter: `id=eq.${lectureId}`,
         },
         (payload) => {
-          console.log('Lecture updated:', payload);
+          console.log('✅ Real-time update received:', payload);
+          console.log('Old status:', payload.old?.processing_status);
+          console.log('New status:', payload.new?.processing_status);
           setLecture(payload.new as Lecture);
+
+          if (payload.new.processing_status === 'completed') {
+            setToast({
+              message: 'AI analysis complete! Your lecture notes are ready.',
+              type: 'success',
+            });
+          }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('📡 Realtime subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Successfully subscribed to lecture updates');
+          setRealtimeStatus('connected');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Realtime subscription error');
+          setRealtimeStatus('disconnected');
+        } else if (status === 'CLOSED') {
+          console.warn('⚠️ Realtime connection closed');
+          setRealtimeStatus('disconnected');
+        }
+      });
 
     return () => {
+      console.log('🔌 Cleaning up Realtime subscription');
       supabase.removeChannel(channel);
     };
   }, [lectureId, user]);
 
+  useEffect(() => {
+    if (!lecture || !lectureId || !user) return;
+    if (lecture.processing_status === 'completed' || lecture.processing_status === 'failed') return;
+
+    console.log('⏰ Setting up polling fallback for processing lecture');
+    const pollInterval = setInterval(async () => {
+      console.log('🔄 Polling for lecture updates...');
+      const { data } = await supabase
+        .from('lectures')
+        .select('processing_status, summary_overview, key_points, important_terms, flashcards')
+        .eq('id', lectureId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (data && data.processing_status !== lecture.processing_status) {
+        console.log('✅ Status changed via polling:', data.processing_status);
+        setLecture((prev) => prev ? { ...prev, ...data } : null);
+
+        if (data.processing_status === 'completed') {
+          setToast({
+            message: 'AI analysis complete! Your lecture notes are ready.',
+            type: 'success',
+          });
+        }
+      }
+    }, 5000);
+
+    return () => {
+      console.log('⏰ Cleaning up polling interval');
+      clearInterval(pollInterval);
+    };
+  }, [lecture, lectureId, user]);
+
   const loadLecture = async () => {
     if (!lectureId || !user) return;
 
+    console.log('📥 Fetching lecture data:', lectureId);
+
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('lectures')
         .select('*')
         .eq('id', lectureId)
         .eq('user_id', user.id)
         .maybeSingle();
 
+      if (error) {
+        console.error('❌ Error loading lecture:', error);
+        throw error;
+      }
+
       if (data) {
+        console.log('✅ Lecture loaded:', {
+          id: data.id,
+          title: data.title,
+          status: data.processing_status,
+          hasData: {
+            summary: !!data.summary_overview,
+            keyPoints: !!data.key_points,
+            terms: !!data.important_terms,
+            flashcards: !!data.flashcards,
+          },
+        });
         setLecture(data);
+      } else {
+        console.warn('⚠️ No lecture found with ID:', lectureId);
       }
     } catch (error) {
-      console.error('Error loading lecture:', error);
+      console.error('❌ Error loading lecture:', error);
+      setToast({
+        message: 'Failed to load lecture. Please try refreshing the page.',
+        type: 'error',
+      });
     } finally {
       setLoading(false);
     }
@@ -83,6 +170,13 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
 
   const handleEmailNotes = () => {
     alert('Email functionality would be implemented here');
+  };
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    console.log('🔄 Manual refresh triggered');
+    await loadLecture();
+    setTimeout(() => setIsRefreshing(false), 500);
   };
 
   const handleDeleteLecture = async () => {
@@ -182,6 +276,16 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
       )}
 
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+        {realtimeStatus === 'connected' && process.env.NODE_ENV === 'development' && (
+          <div className="bg-green-50 border-b border-green-200 px-4 py-1 text-xs text-green-700 text-center">
+            🟢 Real-time updates enabled
+          </div>
+        )}
+        {realtimeStatus === 'disconnected' && (
+          <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-1 text-xs text-yellow-700 text-center">
+            ⚠️ Real-time updates disconnected. Page will refresh automatically.
+          </div>
+        )}
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <button
             onClick={() => navigate('dashboard')}
@@ -223,6 +327,15 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
               </div>
             </div>
             <div className="flex gap-2">
+              <button
+                onClick={handleManualRefresh}
+                disabled={isRefreshing}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition disabled:opacity-50"
+                title="Refresh lecture data"
+              >
+                <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                {isRefreshing ? 'Refreshing...' : 'Refresh'}
+              </button>
               <button
                 onClick={handleDownloadPDF}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition"

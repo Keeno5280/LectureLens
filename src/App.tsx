@@ -8,6 +8,7 @@ import ClassNotesPage from './pages/ClassNotesPage';
 import LectureDetailPage from './pages/LectureDetailPage';
 import SlideViewerPage from './pages/SlideViewerPage';
 import TutorPage from './pages/TutorPage';
+import DebugPanel from './components/DebugPanel';
 
 type Page = 'dashboard' | 'upload' | 'classes' | 'class-notes' | 'lecture' | 'slide-viewer' | 'tutor';
 
@@ -42,21 +43,30 @@ export default function App() {
     return <LoginPage />;
   }
 
-  switch (currentPage) {
-    case 'upload':
-      return <UploadPage />;
-    case 'classes':
-      return <ClassesPage />;
-    case 'class-notes':
-      return pageId ? <ClassNotesPage classId={pageId} /> : <Dashboard />;
-    case 'lecture':
-      return pageId ? <LectureDetailPage lectureId={pageId} /> : <Dashboard />;
-    case 'slide-viewer':
-      return <SlideViewerPage />;
-    case 'tutor':
-      return <TutorPage />;
-    case 'dashboard':
-    default:
-      return <Dashboard />;
-  }
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'upload':
+        return <UploadPage />;
+      case 'classes':
+        return <ClassesPage />;
+      case 'class-notes':
+        return pageId ? <ClassNotesPage classId={pageId} /> : <Dashboard />;
+      case 'lecture':
+        return pageId ? <LectureDetailPage lectureId={pageId} /> : <Dashboard />;
+      case 'slide-viewer':
+        return <SlideViewerPage />;
+      case 'tutor':
+        return <TutorPage />;
+      case 'dashboard':
+      default:
+        return <Dashboard />;
+    }
+  };
+
+  return (
+    <>
+      {renderPage()}
+      <DebugPanel />
+    </>
+  );
 }

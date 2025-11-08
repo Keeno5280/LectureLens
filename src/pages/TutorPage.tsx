@@ -1,80 +1,82 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
 import {
   Send,
-  Search,
-  Plus,
-  MessageSquare,
-  Loader2,
-  ArrowLeft,
+  Lightbulb,
+  FileText,
+  Brain,
+  HelpCircle,
+  BookOpen,
+  Save,
+  CreditCard,
   Trash2,
-  ChevronDown,
+  X,
+  Plus,
+  Check,
+  Loader2,
+  MessageSquare,
 } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
-import Toast from '../components/Toast';
+
+const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 interface Message {
-  sender: 'user' | 'assistant';
-  text: string;
-  timestamp: string;
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  sources?: Array<{ type: string; reference: string }>;
+  query_type?: string;
+  created_at: string;
 }
 
 interface Conversation {
   id: string;
-  user_id: string;
-  class_id: string;
-  summary: string | null;
-  messages: Message[];
-  created_at: string;
+  title: string;
+  context_lectures: string[];
+  context_slides: string[];
   updated_at: string;
 }
 
-interface Class {
+interface QuickAction {
   id: string;
-  name: string;
-  code: string;
+  label: string;
+  query_template: string;
+  icon: string;
 }
 
-type ToastState = {
-  message: string;
-  type: 'success' | 'error';
-} | null;
+interface ContextItem {
+  id: string;
+  type: 'lecture' | 'slide';
+  title: string;
+  subtitle?: string;
+}
 
 export default function TutorPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([]);
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [classes, setClasses] = useState<Class[]>([]);
-  const [selectedClassId, setSelectedClassId] = useState<string>('');
-  const [toast, setToast] = useState<ToastState>(null);
-  const [lastMessageTime, setLastMessageTime] = useState<number>(Date.now());
-  const [summaryTimer, setSummaryTimer] = useState<NodeJS.Timeout | null>(null);
+  const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
+  const [availableContext, setAvailableContext] = useState<ContextItem[]>([]);
+  const [selectedContext, setSelectedContext] = useState<string[]>([]);
+  const [showContextSelector, setShowContextSelector] = useState(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [selectedMessageForSave, setSelectedMessageForSave] = useState<Message | null>(null);
+  const [saveTitle, setSaveTitle] = useState('');
+  const [saveCategory, setSaveCategory] = useState<'note' | 'flashcard' | 'summary'>('note');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (user) {
-      loadClasses();
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (selectedClassId) {
-      loadConversations();
-    }
-  }, [selectedClassId]);
+    loadInitialData();
+  }, []);
 
   useEffect(() => {
     if (currentConversation) {
-      setMessages(currentConversation.messages || []);
+      loadMessages(currentConversation.id);
     }
   }, [currentConversation]);
 
@@ -82,504 +84,607 @@ export default function TutorPage() {
     scrollToBottom();
   }, [messages]);
 
-  useEffect(() => {
-    const filtered = conversations.filter((conv) =>
-      conv.summary?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-    setFilteredConversations(filtered);
-  }, [searchQuery, conversations]);
-
-  useEffect(() => {
-    if (summaryTimer) {
-      clearTimeout(summaryTimer);
-    }
-
-    if (currentConversation && messages.length > 0) {
-      const timer = setTimeout(() => {
-        generateSummary();
-      }, 60000);
-      setSummaryTimer(timer);
-    }
-
-    return () => {
-      if (summaryTimer) {
-        clearTimeout(summaryTimer);
-      }
-    };
-  }, [messages]);
-
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const loadClasses = async () => {
-    if (!user) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('classes')
-        .select('id, name, code')
-        .eq('user_id', user.id)
-        .order('name');
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
-        setClasses(data);
-        setSelectedClassId(data[0].id);
-      }
-    } catch (error) {
-      console.error('Error loading classes:', error);
-      setToast({
-        message: 'Failed to load classes',
-        type: 'error',
-      });
-    }
+  const loadInitialData = async () => {
+    await Promise.all([
+      loadConversations(),
+      loadQuickActions(),
+      loadAvailableContext(),
+    ]);
   };
 
   const loadConversations = async () => {
-    if (!user || !selectedClassId) return;
-
     try {
-      const { data, error } = await supabase
-        .from('ai_conversations')
+      const { data } = await supabase
+        .from('tutor_conversations')
         .select('*')
-        .eq('user_id', user.id)
-        .eq('class_id', selectedClassId)
+        .eq('user_id', MOCK_USER_ID)
         .order('updated_at', { ascending: false });
 
-      if (error) throw error;
-
-      setConversations(data || []);
-      setFilteredConversations(data || []);
-
-      if (data && data.length > 0 && !currentConversation) {
+      if (data && data.length > 0) {
+        setConversations(data);
         setCurrentConversation(data[0]);
       }
     } catch (error) {
       console.error('Error loading conversations:', error);
-      setToast({
-        message: 'Failed to load conversations',
-        type: 'error',
-      });
+    }
+  };
+
+  const loadMessages = async (conversationId: string) => {
+    try {
+      const { data } = await supabase
+        .from('tutor_messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at');
+
+      setMessages(data || []);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+    }
+  };
+
+  const loadQuickActions = async () => {
+    try {
+      const { data } = await supabase
+        .from('tutor_quick_actions')
+        .select('*')
+        .is('user_id', null)
+        .order('sort_order');
+
+      setQuickActions(data || []);
+    } catch (error) {
+      console.error('Error loading quick actions:', error);
+    }
+  };
+
+  const loadAvailableContext = async () => {
+    try {
+      const [lecturesRes, slidesRes] = await Promise.all([
+        supabase
+          .from('lectures')
+          .select('id, title, recording_date')
+          .eq('user_id', MOCK_USER_ID)
+          .eq('processing_status', 'completed')
+          .order('recording_date', { ascending: false })
+          .limit(20),
+        supabase
+          .from('slides')
+          .select('id, slide_number, summary, lecture_id, lectures(title)')
+          .order('created_at', { ascending: false })
+          .limit(50),
+      ]);
+
+      const contextItems: ContextItem[] = [];
+
+      if (lecturesRes.data) {
+        lecturesRes.data.forEach((lecture) => {
+          contextItems.push({
+            id: lecture.id,
+            type: 'lecture',
+            title: lecture.title,
+            subtitle: new Date(lecture.recording_date).toLocaleDateString(),
+          });
+        });
+      }
+
+      setAvailableContext(contextItems);
+    } catch (error) {
+      console.error('Error loading context:', error);
     }
   };
 
   const createNewConversation = async () => {
-    if (!user || !selectedClassId) return;
-
     try {
-      const { data, error } = await supabase
-        .from('ai_conversations')
+      const { data } = await supabase
+        .from('tutor_conversations')
         .insert({
-          user_id: user.id,
-          class_id: selectedClassId,
-          messages: [],
+          user_id: MOCK_USER_ID,
+          title: 'New Conversation',
+          context_lectures: JSON.stringify([]),
+          context_slides: JSON.stringify([]),
         })
         .select()
         .single();
-
-      if (error) throw error;
 
       if (data) {
         setConversations([data, ...conversations]);
         setCurrentConversation(data);
         setMessages([]);
-        setToast({
-          message: 'New conversation started',
-          type: 'success',
-        });
       }
     } catch (error) {
       console.error('Error creating conversation:', error);
-      setToast({
-        message: 'Failed to create conversation',
-        type: 'error',
-      });
     }
   };
 
-  const sendMessage = async () => {
-    if (!inputMessage.trim() || !currentConversation || !user || isTyping) return;
+  const sendMessage = async (queryType: string = 'general', complexityLevel: string = 'medium') => {
+    if (!inputMessage.trim() || !currentConversation) return;
 
-    const userMessage: Message = {
-      sender: 'user',
-      text: inputMessage.trim(),
-      timestamp: new Date().toISOString(),
-    };
-
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
+    const userMessage = inputMessage.trim();
     setInputMessage('');
     setIsTyping(true);
-    setLastMessageTime(Date.now());
 
     try {
-      const response = await fetch('https://n8n-e2ph.onrender.com/webhook/ai-tutor', {
+      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-tutor`;
+      const headers = {
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+      };
+
+      const lectureContext = selectedContext.filter((id) =>
+        availableContext.find((c) => c.id === id && c.type === 'lecture')
+      );
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
-          class_id: selectedClassId,
-          question: userMessage.text,
+          conversationId: currentConversation.id,
+          message: userMessage,
+          queryType,
+          complexityLevel,
+          contextLectures: lectureContext,
+          contextSlides: [],
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to get AI response');
+      if (!response.ok) throw new Error('Failed to get response');
 
       const result = await response.json();
 
-      const aiMessage: Message = {
-        sender: 'assistant',
-        text: result.answer || result.response || 'Sorry, I could not process your request.',
-        timestamp: new Date().toISOString(),
-      };
-
-      const updatedMessages = [...newMessages, aiMessage];
-      setMessages(updatedMessages);
-
-      await supabase
-        .from('ai_conversations')
-        .update({
-          messages: updatedMessages,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', currentConversation.id);
-
-      setCurrentConversation({
-        ...currentConversation,
-        messages: updatedMessages,
-      });
-
-      await loadConversations();
+      await loadMessages(currentConversation.id);
     } catch (error) {
       console.error('Error sending message:', error);
-      setToast({
-        message: 'Failed to send message. Please try again.',
-        type: 'error',
-      });
+      alert('Failed to send message. Please try again.');
     } finally {
       setIsTyping(false);
     }
   };
 
-  const generateSummary = async () => {
-    if (!currentConversation || messages.length === 0) return;
-
-    try {
-      const last10Messages = messages.slice(-10);
-
-      const response = await fetch('https://n8n-e2ph.onrender.com/webhook/ai-tutor', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'summarize_conversation',
-          messages: last10Messages,
-        }),
-      });
-
-      if (!response.ok) throw new Error('Failed to generate summary');
-
-      const result = await response.json();
-      const summary = result.summary || result.Summary || 'Conversation summary';
-
-      await supabase
-        .from('ai_conversations')
-        .update({ summary })
-        .eq('id', currentConversation.id);
-
-      setCurrentConversation({
-        ...currentConversation,
-        summary,
-      });
-
-      await loadConversations();
-    } catch (error) {
-      console.error('Error generating summary:', error);
-    }
+  const handleQuickAction = (action: QuickAction) => {
+    const template = action.query_template;
+    setInputMessage(template);
+    inputRef.current?.focus();
   };
 
-  const deleteConversation = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-
-    if (!confirm('Delete this conversation? This action cannot be undone.')) return;
+  const saveResponse = async () => {
+    if (!selectedMessageForSave || !saveTitle.trim()) return;
 
     try {
-      const { error } = await supabase
-        .from('ai_conversations')
-        .delete()
-        .eq('id', id);
+      await supabase.from('saved_tutor_responses').insert({
+        user_id: MOCK_USER_ID,
+        message_id: selectedMessageForSave.id,
+        title: saveTitle,
+        category: saveCategory,
+        tags: JSON.stringify([]),
+      });
 
-      if (error) throw error;
-
-      setConversations(conversations.filter((c) => c.id !== id));
-
-      if (currentConversation?.id === id) {
-        const remaining = conversations.filter((c) => c.id !== id);
-        setCurrentConversation(remaining[0] || null);
-        setMessages(remaining[0]?.messages || []);
+      if (saveCategory === 'flashcard') {
+        await supabase.from('tutor_flashcards').insert({
+          user_id: MOCK_USER_ID,
+          message_id: selectedMessageForSave.id,
+          question: saveTitle,
+          answer: selectedMessageForSave.content,
+          difficulty: 'medium',
+        });
       }
 
-      setToast({
-        message: 'Conversation deleted',
-        type: 'success',
-      });
+      setShowSaveDialog(false);
+      setSelectedMessageForSave(null);
+      setSaveTitle('');
+      alert('Response saved successfully!');
     } catch (error) {
-      console.error('Error deleting conversation:', error);
-      setToast({
-        message: 'Failed to delete conversation',
-        type: 'error',
-      });
+      console.error('Error saving response:', error);
+      alert('Failed to save response');
     }
   };
 
-  const selectConversation = (conversation: Conversation) => {
-    setCurrentConversation(conversation);
-    setMessages(conversation.messages || []);
+  const deleteConversation = async (id: string) => {
+    if (!confirm('Delete this conversation?')) return;
+
+    try {
+      await supabase.from('tutor_conversations').delete().eq('id', id);
+      setConversations(conversations.filter((c) => c.id !== id));
+      if (currentConversation?.id === id) {
+        setCurrentConversation(conversations[0] || null);
+      }
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+    }
   };
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-gray-600 mb-4">Please log in to use the AI Tutor</p>
+  const getQueryTypeIcon = (type?: string) => {
+    switch (type) {
+      case 'explain':
+        return <Lightbulb className="h-4 w-4" />;
+      case 'summarize':
+        return <FileText className="h-4 w-4" />;
+      case 'mnemonic':
+        return <Brain className="h-4 w-4" />;
+      case 'question':
+        return <HelpCircle className="h-4 w-4" />;
+      default:
+        return <MessageSquare className="h-4 w-4" />;
+    }
+  };
+
+  return (
+    <div className="h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex">
+      <div className="w-80 bg-white border-r border-slate-200 flex flex-col">
+        <div className="p-4 border-b border-slate-200">
           <button
-            onClick={() => navigate('login')}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+            onClick={() => navigate('dashboard')}
+            className="text-sm text-slate-600 hover:text-blue-600 mb-4 transition-colors"
           >
-            Go to Login
+            ← Back to Dashboard
+          </button>
+          <button
+            onClick={createNewConversation}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-medium"
+          >
+            <Plus className="h-5 w-5" />
+            New Conversation
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
+            Conversations
+          </h3>
+          <div className="space-y-2">
+            {conversations.map((conv) => (
+              <button
+                key={conv.id}
+                onClick={() => setCurrentConversation(conv)}
+                className={`w-full text-left p-3 rounded-lg transition-all ${
+                  currentConversation?.id === conv.id
+                    ? 'bg-blue-50 border border-blue-200'
+                    : 'bg-slate-50 border border-transparent hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{conv.title}</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {new Date(conv.updated_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteConversation(conv.id);
+                    }}
+                    className="ml-2 p-1 text-slate-400 hover:text-red-600 transition-colors"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-4 border-t border-slate-200">
+          <button
+            onClick={() => setShowContextSelector(true)}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all text-sm font-medium"
+          >
+            <BookOpen className="h-4 w-4" />
+            Select Context ({selectedContext.length})
           </button>
         </div>
       </div>
-    );
-  }
 
-  return (
-    <div className="h-screen bg-gradient-to-br from-gray-50 to-blue-50 flex flex-col">
-      {toast && (
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          onClose={() => setToast(null)}
-        />
-      )}
-
-      <div className="flex-1 flex overflow-hidden">
-        <div className="w-80 bg-white border-r border-gray-200 flex flex-col shadow-lg">
-          <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-6 text-white">
-            <button
-              onClick={() => navigate('dashboard')}
-              className="flex items-center gap-2 text-blue-100 hover:text-white mb-4 transition"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span className="text-sm">Back to Dashboard</span>
-            </button>
-            <div className="flex items-center gap-3 mb-2">
-              <MessageSquare className="w-8 h-8" />
-              <h1 className="text-2xl font-bold">AI Tutor</h1>
+      <div className="flex-1 flex flex-col">
+        {currentConversation ? (
+          <>
+            <div className="bg-white border-b border-slate-200 px-6 py-4">
+              <h1 className="text-xl font-bold text-slate-800">{currentConversation.title}</h1>
+              <p className="text-sm text-slate-500 mt-1">
+                Ask me anything about your uploaded materials
+              </p>
             </div>
-            <p className="text-blue-100 text-sm">Conversations</p>
-          </div>
 
-          <div className="p-4 border-b border-gray-200">
-            <button
-              onClick={createNewConversation}
-              disabled={!selectedClassId}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Plus className="w-5 h-5" />
-              New Conversation
-            </button>
-          </div>
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+              <div className="max-w-4xl mx-auto space-y-4">
+                {messages.length === 0 && (
+                  <div className="text-center py-12">
+                    <Brain className="h-16 w-16 text-slate-300 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-slate-700 mb-2">
+                      Start a conversation
+                    </h3>
+                    <p className="text-slate-500 mb-6">
+                      Ask questions, request explanations, or get help understanding your course
+                      materials
+                    </p>
+                    <div className="flex flex-wrap gap-2 justify-center max-w-2xl mx-auto">
+                      {quickActions.map((action) => (
+                        <button
+                          key={action.id}
+                          onClick={() => handleQuickAction(action)}
+                          className="px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-all text-sm font-medium"
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-          <div className="p-4 border-b border-gray-200">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search conversations..."
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-              />
-            </div>
-          </div>
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-3xl ${
+                        message.role === 'user'
+                          ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm'
+                          : 'bg-white text-slate-800 rounded-2xl rounded-tl-sm shadow-md border border-slate-200'
+                      } px-6 py-4`}
+                    >
+                      {message.role === 'assistant' && message.query_type && (
+                        <div className="flex items-center gap-2 mb-2 text-slate-500">
+                          {getQueryTypeIcon(message.query_type)}
+                          <span className="text-xs font-medium uppercase">
+                            {message.query_type}
+                          </span>
+                        </div>
+                      )}
 
-          <div className="flex-1 overflow-y-auto p-4">
-            {filteredConversations.length === 0 ? (
-              <div className="text-center py-8">
-                <MessageSquare className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-sm text-gray-500">
-                  {searchQuery ? 'No conversations found' : 'No conversations yet'}
-                </p>
+                      <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+
+                      {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-200">
+                          <p className="text-xs font-medium text-slate-500 mb-2">Sources:</p>
+                          <div className="space-y-1">
+                            {message.sources.map((source, idx) => (
+                              <div key={idx} className="text-xs text-slate-600 flex items-center gap-2">
+                                <BookOpen className="h-3 w-3" />
+                                {source.reference}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {message.role === 'assistant' && (
+                        <div className="mt-4 flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              setSelectedMessageForSave(message);
+                              setSaveTitle(message.content.substring(0, 50));
+                              setShowSaveDialog(true);
+                            }}
+                            className="px-3 py-1 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all text-xs font-medium flex items-center gap-1"
+                          >
+                            <Save className="h-3 w-3" />
+                            Save
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedMessageForSave(message);
+                              setSaveCategory('flashcard');
+                              setSaveTitle('Q: ' + messages[messages.indexOf(message) - 1]?.content.substring(0, 50));
+                              setShowSaveDialog(true);
+                            }}
+                            className="px-3 py-1 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all text-xs font-medium flex items-center gap-1"
+                          >
+                            <CreditCard className="h-3 w-3" />
+                            Flashcard
+                          </button>
+                        </div>
+                      )}
+
+                      <p className="text-xs mt-3 opacity-60">
+                        {new Date(message.created_at).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+
+                {isTyping && (
+                  <div className="flex justify-start">
+                    <div className="bg-white text-slate-800 rounded-2xl rounded-tl-sm shadow-md border border-slate-200 px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                        <span className="text-sm text-slate-600">Thinking...</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div ref={messagesEndRef} />
               </div>
-            ) : (
-              <div className="space-y-2">
-                {filteredConversations.map((conv) => (
+            </div>
+
+            <div className="bg-white border-t border-slate-200 px-6 py-4">
+              <div className="max-w-4xl mx-auto">
+                <div className="flex gap-2 mb-3 overflow-x-auto pb-2">
+                  {quickActions.slice(0, 5).map((action) => (
+                    <button
+                      key={action.id}
+                      onClick={() => handleQuickAction(action)}
+                      className="flex-shrink-0 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all text-sm flex items-center gap-2"
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-end gap-3">
+                  <div className="flex-1 relative">
+                    <input
+                      ref={inputRef}
+                      type="text"
+                      value={inputMessage}
+                      onChange={(e) => setInputMessage(e.target.value)}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          sendMessage();
+                        }
+                      }}
+                      placeholder="Ask a question about your materials..."
+                      className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12"
+                      disabled={isTyping}
+                    />
+                  </div>
                   <button
-                    key={conv.id}
-                    onClick={() => selectConversation(conv)}
-                    className={`w-full text-left p-3 rounded-lg transition group ${
-                      currentConversation?.id === conv.id
-                        ? 'bg-blue-50 border-2 border-blue-200 shadow-sm'
-                        : 'bg-gray-50 border-2 border-transparent hover:border-gray-300 hover:shadow-sm'
+                    onClick={() => sendMessage()}
+                    disabled={!inputMessage.trim() || isTyping}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium flex items-center gap-2"
+                  >
+                    <Send className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <MessageSquare className="h-20 w-20 text-slate-300 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-slate-700 mb-2">
+                No conversation selected
+              </h3>
+              <p className="text-slate-500 mb-6">Create a new conversation to get started</p>
+              <button
+                onClick={createNewConversation}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-medium"
+              >
+                Start Chatting
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {showContextSelector && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between p-6 border-b border-slate-200">
+              <h3 className="text-xl font-bold text-slate-800">Select Context Materials</h3>
+              <button
+                onClick={() => setShowContextSelector(false)}
+                className="text-slate-500 hover:text-slate-700"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto max-h-[60vh]">
+              <p className="text-sm text-slate-600 mb-4">
+                Choose which lectures and materials the AI should reference when answering your
+                questions.
+              </p>
+
+              <div className="space-y-2">
+                {availableContext.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setSelectedContext((prev) =>
+                        prev.includes(item.id)
+                          ? prev.filter((id) => id !== item.id)
+                          : [...prev, item.id]
+                      );
+                    }}
+                    className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
+                      selectedContext.includes(item.id)
+                        ? 'border-blue-600 bg-blue-50'
+                        : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 line-clamp-2 mb-1">
-                          {conv.summary || 'New conversation'}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          {new Date(conv.updated_at).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </p>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-slate-800">{item.title}</p>
+                        {item.subtitle && (
+                          <p className="text-sm text-slate-500 mt-1">{item.subtitle}</p>
+                        )}
                       </div>
-                      <button
-                        onClick={(e) => deleteConversation(conv.id, e)}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {selectedContext.includes(item.id) && (
+                        <Check className="h-5 w-5 text-blue-600" />
+                      )}
                     </div>
                   </button>
                 ))}
               </div>
-            )}
-          </div>
-        </div>
+            </div>
 
-        <div className="flex-1 flex flex-col">
-          <div className="bg-white border-b border-gray-200 px-6 py-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">AI Tutor Chat</h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Ask questions about your course materials
-                </p>
-              </div>
-              <div className="relative">
-                <select
-                  value={selectedClassId}
-                  onChange={(e) => setSelectedClassId(e.target.value)}
-                  className="appearance-none pl-4 pr-10 py-2 bg-gray-50 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium text-gray-700"
-                >
-                  {classes.map((cls) => (
-                    <option key={cls.id} value={cls.id}>
-                      {cls.code} - {cls.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
-              </div>
+            <div className="p-6 border-t border-slate-200">
+              <button
+                onClick={() => setShowContextSelector(false)}
+                className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-medium"
+              >
+                Done ({selectedContext.length} selected)
+              </button>
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="flex-1 overflow-y-auto px-6 py-6 bg-gradient-to-br from-gray-50 to-blue-50">
-            <div className="max-w-4xl mx-auto space-y-4">
-              {messages.length === 0 ? (
-                <div className="text-center py-16">
-                  <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <MessageSquare className="w-10 h-10 text-blue-600" />
-                  </div>
-                  <h3 className="text-xl font-bold text-gray-900 mb-2">
-                    Start a Conversation
-                  </h3>
-                  <p className="text-gray-600 max-w-md mx-auto">
-                    Ask me anything about your lectures, slides, and course materials.
-                    I'm here to help you understand and review!
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {messages.map((message, index) => (
-                    <div
-                      key={index}
-                      className={`flex ${
-                        message.sender === 'user' ? 'justify-end' : 'justify-start'
+      {showSaveDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-md w-full">
+            <div className="flex items-center justify-between p-6 border-b border-slate-200">
+              <h3 className="text-xl font-bold text-slate-800">Save Response</h3>
+              <button
+                onClick={() => setShowSaveDialog(false)}
+                className="text-slate-500 hover:text-slate-700"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Title</label>
+                <input
+                  type="text"
+                  value={saveTitle}
+                  onChange={(e) => setSaveTitle(e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter a title..."
+                />
+              </div>
+
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-slate-700 mb-2">Save As</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['note', 'flashcard', 'summary'] as const).map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setSaveCategory(cat)}
+                      className={`px-4 py-2 rounded-lg border-2 transition-all capitalize ${
+                        saveCategory === cat
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-slate-200 text-slate-700 hover:border-slate-300'
                       }`}
                     >
-                      <div
-                        className={`max-w-2xl px-6 py-4 rounded-2xl shadow-md ${
-                          message.sender === 'user'
-                            ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-tr-sm'
-                            : 'bg-white text-gray-800 rounded-tl-sm border border-gray-200'
-                        }`}
-                      >
-                        <p className="whitespace-pre-wrap leading-relaxed">{message.text}</p>
-                        <p
-                          className={`text-xs mt-2 ${
-                            message.sender === 'user' ? 'text-blue-100' : 'text-gray-500'
-                          }`}
-                        >
-                          {new Date(message.timestamp).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </p>
-                      </div>
-                    </div>
+                      {cat}
+                    </button>
                   ))}
-
-                  {isTyping && (
-                    <div className="flex justify-start">
-                      <div className="max-w-2xl px-6 py-4 rounded-2xl rounded-tl-sm shadow-md bg-white border border-gray-200">
-                        <div className="flex items-center gap-3">
-                          <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-                          <span className="text-gray-600 font-medium">
-                            The tutor is thinking...
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div ref={messagesEndRef} />
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white border-t border-gray-200 px-6 py-4 shadow-lg">
-            <div className="max-w-4xl mx-auto">
-              <div className="flex items-end gap-3">
-                <div className="flex-1">
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        sendMessage();
-                      }
-                    }}
-                    placeholder="Ask a question about your materials..."
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    disabled={isTyping || !currentConversation}
-                  />
                 </div>
-                <button
-                  onClick={sendMessage}
-                  disabled={!inputMessage.trim() || isTyping || !currentConversation}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition font-medium flex items-center gap-2 shadow-md hover:shadow-lg"
-                >
-                  <Send className="w-5 h-5" />
-                  Send
-                </button>
               </div>
+
+              <button
+                onClick={saveResponse}
+                disabled={!saveTitle.trim()}
+                className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
