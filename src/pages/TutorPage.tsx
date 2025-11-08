@@ -157,7 +157,12 @@ export default function TutorPage() {
         .eq('conversation_id', conversationId)
         .order('created_at');
 
-      setMessages(data || []);
+      const normalizedMessages = (data || []).map(msg => ({
+        ...msg,
+        sources: Array.isArray(msg.sources) ? msg.sources : (msg.sources ? [] : [])
+      }));
+
+      setMessages(normalizedMessages);
     } catch (error) {
       console.error('Error loading messages:', error);
     }
