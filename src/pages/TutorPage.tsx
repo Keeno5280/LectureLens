@@ -497,14 +497,41 @@ export default function TutorPage() {
       <div className="flex-1 flex flex-col">
         {!selectedClassId ? (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center py-16">
+            <div className="text-center py-16 max-w-xl mx-auto px-6">
               <BookOpen className="h-20 w-20 text-slate-300 mx-auto mb-6" />
               <h3 className="text-2xl font-bold text-slate-700 mb-3">
                 Select a Class to Start
               </h3>
-              <p className="text-slate-500 mb-8 max-w-md mx-auto">
-                Choose a class from the dropdown in the header to access your AI tutor and start asking questions about your course materials.
+              <p className="text-slate-500 mb-8">
+                Choose a class below to access your AI tutor and start asking questions about your course materials.
               </p>
+
+              {isLoadingClasses ? (
+                <div className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading classes...
+                </div>
+              ) : classesError ? (
+                <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600 mb-6">
+                  {classesError}
+                </div>
+              ) : (
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="w-full max-w-md mx-auto px-4 py-3 bg-white border border-slate-300 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer hover:border-slate-400 transition-colors mb-6"
+                >
+                  <option value="" disabled>
+                    Select a class...
+                  </option>
+                  {classes.map((cls) => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name} - {cls.professor}
+                    </option>
+                  ))}
+                </select>
+              )}
+
               <div className="inline-flex items-center gap-2 px-5 py-3 bg-blue-50 text-blue-700 rounded-lg border border-blue-200">
                 <Brain className="h-5 w-5" />
                 <span className="font-medium">Ready to help with any class!</span>
