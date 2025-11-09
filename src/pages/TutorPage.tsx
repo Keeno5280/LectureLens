@@ -481,7 +481,7 @@ export default function TutorPage() {
                 </div>
                 <div className="ml-6">
                   <label className="block text-xs font-medium text-slate-600 mb-2">
-                    Filter by Class
+                    Select Class
                   </label>
                   {isLoadingClasses ? (
                     <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
@@ -493,18 +493,34 @@ export default function TutorPage() {
                       {classesError}
                     </div>
                   ) : (
-                    <select
-                      value={selectedClassId}
-                      onChange={(e) => setSelectedClassId(e.target.value)}
-                      className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[200px] cursor-pointer hover:border-slate-400 transition-colors"
-                    >
-                      <option value="">All Classes</option>
-                      {classes.map((cls) => (
-                        <option key={cls.id} value={cls.id}>
-                          {cls.name} - {cls.professor}
+                    <div className="relative">
+                      <select
+                        value={selectedClassId}
+                        onChange={(e) => setSelectedClassId(e.target.value)}
+                        className={`px-4 py-2 bg-white border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[200px] cursor-pointer transition-all ${
+                          selectedClassId
+                            ? 'border-blue-500 text-slate-800 font-medium bg-blue-50'
+                            : 'border-slate-300 text-slate-500 hover:border-slate-400'
+                        }`}
+                      >
+                        <option value="" disabled>
+                          Select a class...
                         </option>
-                      ))}
-                    </select>
+                        {classes.map((cls) => (
+                          <option key={cls.id} value={cls.id}>
+                            {cls.name} - {cls.professor}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedClassId && (
+                        <div className="absolute -bottom-5 left-0 right-0 text-center">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
+                            <Check className="h-3 w-3" />
+                            Active
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -512,7 +528,21 @@ export default function TutorPage() {
 
             <div className="flex-1 overflow-y-auto px-6 py-6">
               <div className="max-w-4xl mx-auto space-y-4">
-                {messages.length === 0 && (
+                {!selectedClassId ? (
+                  <div className="text-center py-16">
+                    <BookOpen className="h-20 w-20 text-slate-300 mx-auto mb-6" />
+                    <h3 className="text-2xl font-bold text-slate-700 mb-3">
+                      Select a Class to Start
+                    </h3>
+                    <p className="text-slate-500 mb-8 max-w-md mx-auto">
+                      Choose a class from the dropdown above to access your AI tutor and start asking questions about your course materials.
+                    </p>
+                    <div className="inline-flex items-center gap-2 px-5 py-3 bg-blue-50 text-blue-700 rounded-lg border border-blue-200">
+                      <Brain className="h-5 w-5" />
+                      <span className="font-medium">Ready to help with any class!</span>
+                    </div>
+                  </div>
+                ) : messages.length === 0 ? (
                   <div className="text-center py-12">
                     <Brain className="h-16 w-16 text-slate-300 mx-auto mb-4" />
                     <h3 className="text-lg font-semibold text-slate-700 mb-2">
@@ -520,7 +550,7 @@ export default function TutorPage() {
                     </h3>
                     <p className="text-slate-500 mb-6">
                       Ask questions, request explanations, or get help understanding your course
-                      materials
+                      materials for {classes.find(c => c.id === selectedClassId)?.name}
                     </p>
                     <div className="flex flex-wrap gap-2 justify-center max-w-2xl mx-auto">
                       {quickActions.map((action) => (
@@ -534,7 +564,7 @@ export default function TutorPage() {
                       ))}
                     </div>
                   </div>
-                )}
+                ) : null}
 
                 {messages.map((message) => (
                   <div
