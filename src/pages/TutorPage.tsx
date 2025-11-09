@@ -153,12 +153,7 @@ export default function TutorPage() {
         setCurrentConversation(data[0]);
       } else {
         setConversations([]);
-        // Auto-create a new conversation if none exist for this class
-        if (selectedClassId) {
-          await createNewConversation();
-        } else {
-          setCurrentConversation(null);
-        }
+        setCurrentConversation(null);
       }
     } catch (error) {
       console.error('Error loading conversations:', error);
@@ -264,15 +259,41 @@ export default function TutorPage() {
   };
 
   const sendMessage = async (queryType: string = 'general', complexityLevel: string = 'medium') => {
-    if (!inputMessage.trim() || !currentConversation) return;
+    if (!inputMessage.trim()) return;
+    if (!selectedClassId) return;
 
     const userMessage = inputMessage.trim();
     setInputMessage('');
     setIsTyping(true);
 
+    let conversationToUse = currentConversation;
+
+    if (!conversationToUse) {
+      const { data } = await supabase
+        .from('tutor_conversations')
+        .insert({
+          user_id: MOCK_USER_ID,
+          title: userMessage.substring(0, 50),
+          class_id: selectedClassId,
+          context_lectures: JSON.stringify([]),
+          context_slides: JSON.stringify([]),
+        })
+        .select()
+        .single();
+
+      if (data) {
+        conversationToUse = data;
+        setCurrentConversation(data);
+        setConversations([data, ...conversations]);
+      } else {
+        setIsTyping(false);
+        return;
+      }
+    }
+
     const userMsgData = {
       id: crypto.randomUUID(),
-      conversation_id: currentConversation.id,
+      conversation_id: conversationToUse.id,
       role: 'user',
       content: userMessage,
       created_at: new Date().toISOString(),
@@ -318,7 +339,7 @@ export default function TutorPage() {
 
       const assistantMsgData = {
         id: crypto.randomUUID(),
-        conversation_id: currentConversation.id,
+        conversation_id: conversationToUse.id,
         role: 'assistant',
         content: result.answer || 'No response received',
         created_at: new Date().toISOString(),
@@ -411,21 +432,25 @@ export default function TutorPage() {
           >
             ← Back to Dashboard
           </button>
-          <button
-            onClick={createNewConversation}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-medium"
-          >
-            <Plus className="h-5 w-5" />
-            New Conversation
-          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
           <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-            Conversations
+            Chat History
           </h3>
-          <div className="space-y-2">
-            {conversations.map((conv) => (
+          {conversations.length === 0 ? (
+            <div className="text-center py-8 px-4">
+              <MessageSquare className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-sm text-slate-500">
+                No conversations yet
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                Start chatting to create a conversation
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {conversations.map((conv) => (
               <button
                 key={conv.id}
                 onClick={() => setCurrentConversation(conv)}
@@ -454,7 +479,8 @@ export default function TutorPage() {
                 </div>
               </button>
             ))}
-          </div>
+            </div>
+          )}
         </div>
 
         <div className="p-4 border-t border-slate-200">
@@ -699,23 +725,7 @@ export default function TutorPage() {
               </div>
             </div>
           </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <MessageSquare className="h-20 w-20 text-slate-300 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-slate-700 mb-2">
-                No conversation selected
-              </h3>
-              <p className="text-slate-500 mb-6">Create a new conversation to get started</p>
-              <button
-                onClick={createNewConversation}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-medium"
-              >
-                Start Chatting
-              </button>
-            </div>
-          </div>
-        )}
+        ) : null}
       </div>
 
       {showContextSelector && (
