@@ -495,12 +495,30 @@ export default function TutorPage() {
       </div>
 
       <div className="flex-1 flex flex-col">
-        {currentConversation ? (
+        {!selectedClassId ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center py-16">
+              <BookOpen className="h-20 w-20 text-slate-300 mx-auto mb-6" />
+              <h3 className="text-2xl font-bold text-slate-700 mb-3">
+                Select a Class to Start
+              </h3>
+              <p className="text-slate-500 mb-8 max-w-md mx-auto">
+                Choose a class from the dropdown in the header to access your AI tutor and start asking questions about your course materials.
+              </p>
+              <div className="inline-flex items-center gap-2 px-5 py-3 bg-blue-50 text-blue-700 rounded-lg border border-blue-200">
+                <Brain className="h-5 w-5" />
+                <span className="font-medium">Ready to help with any class!</span>
+              </div>
+            </div>
+          </div>
+        ) : (
           <>
             <div className="bg-white border-b border-slate-200 px-6 py-4">
               <div className="flex items-center justify-between">
                 <div className="flex-1">
-                  <h1 className="text-xl font-bold text-slate-800">{currentConversation.title}</h1>
+                  <h1 className="text-xl font-bold text-slate-800">
+                    {currentConversation ? currentConversation.title : 'AI Tutor'}
+                  </h1>
                   <p className="text-sm text-slate-500 mt-1">
                     Ask me anything about your uploaded materials
                   </p>
@@ -554,21 +572,7 @@ export default function TutorPage() {
 
             <div className="flex-1 overflow-y-auto px-6 py-6">
               <div className="max-w-4xl mx-auto space-y-4">
-                {!selectedClassId ? (
-                  <div className="text-center py-16">
-                    <BookOpen className="h-20 w-20 text-slate-300 mx-auto mb-6" />
-                    <h3 className="text-2xl font-bold text-slate-700 mb-3">
-                      Select a Class to Start
-                    </h3>
-                    <p className="text-slate-500 mb-8 max-w-md mx-auto">
-                      Choose a class from the dropdown above to access your AI tutor and start asking questions about your course materials.
-                    </p>
-                    <div className="inline-flex items-center gap-2 px-5 py-3 bg-blue-50 text-blue-700 rounded-lg border border-blue-200">
-                      <Brain className="h-5 w-5" />
-                      <span className="font-medium">Ready to help with any class!</span>
-                    </div>
-                  </div>
-                ) : messages.length === 0 ? (
+                {messages.length === 0 ? (
                   <div className="text-center py-12">
                     <Brain className="h-16 w-16 text-slate-300 mx-auto mb-4" />
                     <h3 className="text-lg font-semibold text-slate-700 mb-2">
@@ -725,7 +729,7 @@ export default function TutorPage() {
               </div>
             </div>
           </>
-        ) : null}
+        )}
       </div>
 
       {showContextSelector && (
