@@ -27,6 +27,8 @@ export default function UploadPage() {
   const [classes, setClasses] = useState<Array<{ id: string; name: string }>>([]);
   const [toast, setToast] = useState<ToastState>(null);
   const [retryAttempt, setRetryAttempt] = useState(0);
+  const [isDraggingAudio, setIsDraggingAudio] = useState(false);
+  const [isDraggingSlides, setIsDraggingSlides] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -239,6 +241,75 @@ export default function UploadPage() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      handleFileUpload(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent, type: 'audio' | 'slides') => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (type === 'audio') {
+      setIsDraggingAudio(true);
+    } else {
+      setIsDraggingSlides(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent, type: 'audio' | 'slides') => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (type === 'audio') {
+      setIsDraggingAudio(false);
+    } else {
+      setIsDraggingSlides(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent, type: 'audio' | 'slides') => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (type === 'audio') {
+      setIsDraggingAudio(false);
+    } else {
+      setIsDraggingSlides(false);
+    }
+
+    if (!title || !classId) {
+      setToast({
+        message: 'Please enter a title and select a class first',
+        type: 'error',
+      });
+      return;
+    }
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+
+      if (type === 'audio') {
+        const isValidAudio = file.type.startsWith('audio/') || file.type.startsWith('video/');
+        if (!isValidAudio) {
+          setToast({
+            message: 'Please drop an audio or video file',
+            type: 'error',
+          });
+          return;
+        }
+      } else if (type === 'slides') {
+        const isValidSlide = file.type === 'application/pdf' ||
+                           file.type === 'application/vnd.ms-powerpoint' ||
+                           file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+                           file.type.startsWith('image/');
+        if (!isValidSlide) {
+          setToast({
+            message: 'Please drop a PDF, PowerPoint, or image file',
+            type: 'error',
+          });
+          return;
+        }
+      }
+
       handleFileUpload(file);
     }
   };
@@ -495,12 +566,27 @@ export default function UploadPage() {
           </div>
 
           <div className="grid md:grid-cols-3 gap-6">
-            <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-blue-500 transition">
-              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Upload className="w-8 h-8 text-blue-600" />
+            <div
+              className={`border-2 border-dashed rounded-xl p-8 text-center transition ${
+                isDraggingAudio
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-300 hover:border-blue-500'
+              }`}
+              onDragOver={(e) => handleDragOver(e, 'audio')}
+              onDragLeave={(e) => handleDragLeave(e, 'audio')}
+              onDrop={(e) => handleDrop(e, 'audio')}
+            >
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 transition ${
+                isDraggingAudio ? 'bg-blue-200' : 'bg-blue-100'
+              }`}>
+                <Upload className={`w-8 h-8 transition ${
+                  isDraggingAudio ? 'text-blue-700' : 'text-blue-600'
+                }`} />
               </div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">Upload Audio/Video</h3>
-              <p className="text-sm text-gray-600 mb-4">Upload audio or video file</p>
+              <p className="text-sm text-gray-600 mb-4">
+                {isDraggingAudio ? 'Drop file here' : 'Drag & drop or click to upload'}
+              </p>
               <label className="cursor-pointer inline-block">
                 <input
                   type="file"
@@ -521,12 +607,27 @@ export default function UploadPage() {
               </label>
             </div>
 
-            <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-purple-500 transition">
-              <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Presentation className="w-8 h-8 text-purple-600" />
+            <div
+              className={`border-2 border-dashed rounded-xl p-8 text-center transition ${
+                isDraggingSlides
+                  ? 'border-green-500 bg-green-50'
+                  : 'border-gray-300 hover:border-green-500'
+              }`}
+              onDragOver={(e) => handleDragOver(e, 'slides')}
+              onDragLeave={(e) => handleDragLeave(e, 'slides')}
+              onDrop={(e) => handleDrop(e, 'slides')}
+            >
+              <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 transition ${
+                isDraggingSlides ? 'bg-green-200' : 'bg-green-100'
+              }`}>
+                <Presentation className={`w-8 h-8 transition ${
+                  isDraggingSlides ? 'text-green-700' : 'text-green-600'
+                }`} />
               </div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">Upload Slides</h3>
-              <p className="text-sm text-gray-600 mb-4">PowerPoint, PDF, or images</p>
+              <p className="text-sm text-gray-600 mb-4">
+                {isDraggingSlides ? 'Drop file here' : 'Drag & drop or click to upload'}
+              </p>
               <label className="cursor-pointer inline-block">
                 <input
                   type="file"
@@ -540,7 +641,7 @@ export default function UploadPage() {
                   className={`px-6 py-2 rounded-lg font-medium inline-block transition ${
                     !title || !classId
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                      : 'bg-purple-600 text-white hover:bg-purple-700 cursor-pointer'
+                      : 'bg-green-600 text-white hover:bg-green-700 cursor-pointer'
                   }`}
                 >
                   Choose Slides
