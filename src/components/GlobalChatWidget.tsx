@@ -70,37 +70,24 @@ export default function GlobalChatWidget() {
 
             if (!currentConvoId) throw new Error("Failed to create conversation");
 
-            // 2. Insert User Message
-            await supabase.from('tutor_messages').insert({
-                conversation_id: currentConvoId,
-                role: 'user',
-                content: userText
+            // 2. Call the ai-tutor edge function. It stores both the user
+            // and assistant messages itself, so we don't insert here.
+            const { data, error: invokeError } = await supabase.functions.invoke('ai-tutor', {
+                body: {
+                    conversationId: currentConvoId,
+                    message: userText,
+                    classId: selectedClassId,
+                },
             });
 
-            // 3. Call AI Webhook
-            const response = await fetch('https://n8n-e2ph.onrender.com/webhook/ai-tutor', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    question: userText,
-                    class_id: selectedClassId,
-                    conversation_id: currentConvoId,
-                }),
-            });
+            if (invokeError) throw new Error(invokeError.message);
+            if (!data || typeof data.answer !== 'string') {
+                throw new Error('AI tutor returned no answer');
+            }
+            const aiResponse = data.answer;
 
-            if (!response.ok) throw new Error('AI Error');
-            const result = await response.json();
-            const aiResponse = result.answer || "I'm having trouble thinking right now.";
-
-            // 4. Update UI with AI Response
+            // 3. Update UI with AI Response
             setMessages(prev => [...prev, { id: Date.now().toString() + 'ai', role: 'assistant', content: aiResponse }]);
-
-            // 5. Save AI Message to DB
-            await supabase.from('tutor_messages').insert({
-                conversation_id: currentConvoId,
-                role: 'assistant',
-                content: aiResponse
-            });
 
         } catch (error) {
             console.error(error);

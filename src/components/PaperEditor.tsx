@@ -10,9 +10,15 @@ type Props = {
     conversationId: string;
     userId: string;
     onAskAI?: (text: string, context: string) => void;
+    /**
+     * Lifts the assignment prompt/rubric up to the parent (TutorPage) so it
+     * can be sent to the ai-tutor edge function without scraping the DOM for
+     * this textarea's value.
+     */
+    onAssignmentPromptChange?: (prompt: string) => void;
 };
 
-export default function PaperEditor({ conversationId, userId, onAskAI }: Props) {
+export default function PaperEditor({ conversationId, userId, onAskAI, onAssignmentPromptChange }: Props) {
     const [paperId, setPaperId] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [lastSaved, setLastSaved] = useState<Date | null>(null);
@@ -35,6 +41,7 @@ export default function PaperEditor({ conversationId, userId, onAskAI }: Props) 
                 setPaperId(data.id);
                 setTitle(data.title);
                 setAssignmentPrompt(data.assignment_prompt || '');
+                onAssignmentPromptChange?.(data.assignment_prompt || '');
                 if (editor && data.content && Object.keys(data.content).length > 0) {
                     editor.commands.setContent(data.content);
                 }
@@ -113,6 +120,7 @@ export default function PaperEditor({ conversationId, userId, onAskAI }: Props) 
 
     const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setAssignmentPrompt(e.target.value);
+        onAssignmentPromptChange?.(e.target.value);
         triggerSave();
     };
 

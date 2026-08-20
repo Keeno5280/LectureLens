@@ -74,6 +74,9 @@ export default function TutorPage() {
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [isLoadingClasses, setIsLoadingClasses] = useState(false);
   const [classesError, setClassesError] = useState<string>('');
+  // Lifted from PaperEditor so sendMessage can pass it to ai-tutor without
+  // scraping the DOM for the assignment-prompt textarea's value.
+  const [assignmentPrompt, setAssignmentPrompt] = useState<string>('');
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -110,6 +113,9 @@ export default function TutorPage() {
     if (currentConversation) {
       loadMessages(currentConversation.id);
     }
+    // Each conversation has its own paper; clear the stale prompt until
+    // PaperEditor reports the new one via onAssignmentPromptChange.
+    setAssignmentPrompt('');
   }, [currentConversation]);
 
   useEffect(() => {
@@ -275,40 +281,25 @@ export default function TutorPage() {
     setMessages(prev => [...prev, { ...userMsgData, id: 'temp-user', created_at: new Date().toISOString() } as Message]);
 
     try {
-      await supabase.from('tutor_messages').insert(userMsgData);
-
-      // Use the newly created webhook path
-      const apiUrl = 'https://n8n-e2ph.onrender.com/webhook/ai-tutor';
-
-      const requestBody = {
-        question: userMessage,
-        class_id: selectedClassId,
-        conversation_id: conversationToUse.id,
-        // Add context for Paper Lab if available
-        assignment_prompt: (document.querySelector('textarea[placeholder*="assignment prompt"]') as HTMLTextAreaElement)?.value || '',
-        // If we had a state for paper content, we'd pass it here. 
-        // For now, n8n can fetch it from DB using conversation_id
-      };
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
+      // The ai-tutor edge function stores both the user and assistant
+      // messages itself (and does the class-scoped context lookup), so we
+      // do NOT insert userMsgData here — only the optimistic local echo above.
+      const { data, error } = await supabase.functions.invoke('ai-tutor', {
+        body: {
+          conversationId: conversationToUse.id,
+          message: userMessage,
+          classId: selectedClassId || null,
+          assignmentPrompt: assignmentPrompt || null,
+        },
       });
 
-      if (!response.ok) throw new Error('AI Response Failed');
+      if (error) throw new Error(error.message);
+      if (!data || typeof data.answer !== 'string') {
+        throw new Error('AI tutor returned no answer');
+      }
 
-      const result = await response.json();
-
-      const assistantMsgData = {
-        conversation_id: conversationToUse.id,
-        role: 'assistant',
-        content: result.answer || 'No response received',
-      };
-
-      await supabase.from('tutor_messages').insert(assistantMsgData);
-
-      // Refresh messages to get real IDs
+      // Refresh messages to get the real rows (with real IDs) the edge
+      // function just wrote.
       loadMessages(conversationToUse.id);
 
     } catch (error) {
@@ -436,6 +427,7 @@ export default function TutorPage() {
                 conversationId={currentConversation.id}
                 userId={user.id} // Should use real user from AuthContext in prod
                 onAskAI={handleAskAI}
+                onAssignmentPromptChange={setAssignmentPrompt}
               />
             ) : (
               <div className="flex-1 flex items-center justify-center p-8 text-center bg-slate-50/50">
