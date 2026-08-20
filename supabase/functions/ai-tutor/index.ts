@@ -274,11 +274,33 @@ async function gatherContext(
             `Key Points: ${lecture.key_points.join('; ')}`
           );
         }
-        if (lecture.important_terms && Object.keys(lecture.important_terms).length > 0) {
-          const terms = Object.entries(lecture.important_terms)
+        // `important_terms` is an array of {term, definition} under the
+        // current schema (see _shared/schemas.ts and migration
+        // 20260819210000, which changed the column default to '[]'::jsonb).
+        // Legacy rows written before that migration may still hold the old
+        // shape — a {term: definition} object map, under the original
+        // '{}'::jsonb default — so both are handled here. Object.entries()
+        // on an array yields index/element pairs (`0: [object Object]`),
+        // not term/definition pairs, which is exactly the bug this guards
+        // against: feeding Claude stringified objects as if they were
+        // authoritative definitions.
+        if (Array.isArray(lecture.important_terms) && lecture.important_terms.length > 0) {
+          const terms = lecture.important_terms
+            .filter((t: { term?: string; definition?: string }) => t && t.term && t.definition)
+            .map((t: { term: string; definition: string }) => `${t.term}: ${t.definition}`)
+            .join('; ');
+          if (terms) contextParts.push(`Important Terms: ${terms}`);
+        } else if (
+          lecture.important_terms &&
+          typeof lecture.important_terms === 'object' &&
+          !Array.isArray(lecture.important_terms) &&
+          Object.keys(lecture.important_terms).length > 0
+        ) {
+          const terms = Object.entries(lecture.important_terms as Record<string, unknown>)
+            .filter(([term, def]) => term && def)
             .map(([term, def]) => `${term}: ${def}`)
             .join('; ');
-          contextParts.push(`Important Terms: ${terms}`);
+          if (terms) contextParts.push(`Important Terms: ${terms}`);
         }
       }
     }

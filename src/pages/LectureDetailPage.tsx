@@ -56,7 +56,15 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
           console.log('✅ Real-time update received:', payload);
           console.log('Old status:', payload.old?.processing_status);
           console.log('New status:', payload.new?.processing_status);
-          setLecture(payload.new as Lecture);
+          // The postgres_changes payload is the BARE `lectures` row — it has no
+          // key_terms/flashcards joins. Replacing state with it directly would wipe
+          // Important Terms and Flashcards off the screen the instant analysis
+          // completes. Re-fetch the full joined object instead. This is safe from a
+          // loop standpoint: this effect's deps are [lectureId, user] only, so the
+          // setLecture() inside loadLecture() does not re-run this effect or
+          // re-subscribe the channel (it only re-runs the separate polling effect,
+          // same as clicking the existing Refresh button already does).
+          loadLecture();
 
           if (payload.new.processing_status === 'completed') {
             setToast({
