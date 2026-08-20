@@ -150,16 +150,23 @@ export default function UploadPage() {
     }
 
     setUploadStatus('uploading');
-    setUploadProgress(10);
+    setUploadProgress(0);          // new upload genuinely starts here — explicit reset, not clamped
+
+    // Progress must never visibly regress (a real observed failure mode: transformers.js
+    // reports per-file download progress, so a second model artifact starting its own fetch
+    // resets its raw progress to 0, which without clamping would rewind the bar).
+    const bumpProgress = (next: number) => setUploadProgress((p) => Math.max(p, next));
 
     let lectureId: string | undefined;
 
     try {
+      bumpProgress(10);
+
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
       const filePath = `${user.id}/${fileName}`;
 
-      setUploadProgress(30);
+      bumpProgress(30);
 
       const { error: uploadError } = await supabase.storage
         .from('lecture-uploads')
@@ -173,7 +180,7 @@ export default function UploadPage() {
         throw new Error('Failed to upload file to storage');
       }
 
-      setUploadProgress(60);
+      bumpProgress(60);
 
       const { data: { publicUrl } } = supabase.storage
         .from('lecture-uploads')
@@ -182,7 +189,7 @@ export default function UploadPage() {
       const fileType = file.type.startsWith('audio/') ? 'audio' :
                        file.type.startsWith('video/') ? 'video' : 'slides';
 
-      setUploadProgress(70);
+      bumpProgress(70);
 
       const { data: lecture, error: insertError } = await supabase
         .from('lectures')
@@ -202,12 +209,17 @@ export default function UploadPage() {
 
       // Transcribe in the browser for audio/video. Slides go straight to Claude.
       if (isTranscribable(file)) {
-        await supabase.from('lectures')
+        const { error: statusError } = await supabase.from('lectures')
           .update({ processing_status: 'transcribing' }).eq('id', lecture.id);
+        if (statusError) {
+          // Non-fatal: this write only exists to make an interrupted run visibly
+          // in-flight. Transcription can still proceed without it.
+          console.error('Could not mark lecture as transcribing (continuing anyway):', statusError);
+        }
 
         const transcriber = await getTranscriber();
         const transcript = await transcriber.transcribe(file, (pct) =>
-          setUploadProgress(60 + pct * 0.25));          // transcription = 60%..85%
+          bumpProgress(60 + pct * 0.25));          // transcription = 60%..85%
 
         const { error: tErr } = await supabase.from('lectures').update({
           transcript,
@@ -217,27 +229,41 @@ export default function UploadPage() {
         if (tErr) throw new Error(`Could not save transcript: ${tErr.message}`);
       }
 
-      setUploadProgress(90);
+      bumpProgress(90);
 
       const { error: fnError } = await supabase.functions.invoke('analyze-lecture', {
         body: { lectureId: lecture.id },
       });
       if (fnError) throw new Error(`AI analysis failed to start: ${fnError.message}`);
 
-      setUploadProgress(100);
+      bumpProgress(100);
       setUploadedLectureId(lecture.id);
       setUploadStatus('success');
 
       await fetchUploadedLecture();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed';
+      let recoveryFailed = false;
       if (lectureId) {
-        await supabase.from('lectures').update({
+        const { error: recoveryError } = await supabase.from('lectures').update({
           processing_status: 'failed', processing_error: message.slice(0, 500),
         }).eq('id', lectureId);
+        if (recoveryError) {
+          // The write whose entire job is recording the failure just failed itself.
+          // The lecture row is now stuck in whatever non-terminal status it had
+          // (pending/transcribing/etc) from every other view — Dashboard, DebugPanel,
+          // ClassNotesPage. Don't let the user believe it was cleanly marked failed.
+          console.error('Could not record failure status on lecture:', lectureId, recoveryError);
+          recoveryFailed = true;
+        }
       }
       setUploadStatus('error');
-      setToast({ message: `❌ ${message}`, type: 'error' });
+      setToast({
+        message: recoveryFailed
+          ? `❌ ${message} (and the failure could not be recorded — this lecture may still show as in-progress; you can delete it from the dashboard and re-upload)`
+          : `❌ ${message}`,
+        type: 'error',
+      });
     }
   };
 
