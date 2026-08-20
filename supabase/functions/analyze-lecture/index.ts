@@ -91,6 +91,31 @@ Deno.serve(async (req) => {
     // each is checked. A completed status must genuinely mean "everything
     // landed" — checking these after the completed-write would leave a row
     // marked completed that then has to be rolled back on failure.
+    //
+    // Retry is a first-class UI action and these inserts are INSERT-only with
+    // no unique constraint, so re-analysing without clearing the previous set
+    // first appends a second full set alongside the first (17 flashcards
+    // become 34, 12 key_terms become 24). Delete this lecture's prior
+    // auto-generated children before inserting the new set — unconditionally,
+    // not just when the new analysis has rows, so a retry that legitimately
+    // produces fewer/zero items doesn't leave stale rows behind either.
+    //
+    // flashcards has is_auto_generated (the insert below always sets it true),
+    // so the delete is scoped to it and a hand-made card survives. key_terms
+    // has no equivalent column — every migration touching it was checked
+    // (create_slides_system, fix_security_issues, fix_security_issues_indexes
+    // _and_rls, enable_rls_on_tutor_tables) and the table only ever gained
+    // indexes/RLS policies; its columns are id/lecture_id/slide_id/term
+    // /definition/context/created_at. Every key_terms row for a lecture is
+    // therefore analysis output, so that delete is unscoped by design.
+    const { error: fcDelErr } = await admin.from('flashcards')
+      .delete().eq('lecture_id', lectureId).eq('is_auto_generated', true)
+    if (fcDelErr) return await fail(`Could not clear previous flashcards: ${fcDelErr.message}`)
+
+    const { error: ktDelErr } = await admin.from('key_terms')
+      .delete().eq('lecture_id', lectureId)
+    if (ktDelErr) return await fail(`Could not clear previous key terms: ${ktDelErr.message}`)
+
     if (analysis.flashcards.length) {
       const { error: fcErr } = await admin.from('flashcards').insert(analysis.flashcards.map((f) => ({
         lecture_id: lectureId, user_id: auth.userId,

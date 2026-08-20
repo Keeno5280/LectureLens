@@ -65,4 +65,13 @@ describe('analyzeLecture', () => {
     expect(MODEL).toBe('claude-opus-5')
     expect(MAX_TOKENS).toBe(16000)
   })
+
+  it('throws on a truncated response instead of writing a silently incomplete analysis', async () => {
+    // stop_reason: 'max_tokens' with a parsed_output that still looks usable —
+    // truncation can land mid-object and still parse, so the null check alone
+    // would miss this and let a partial analysis through as 'completed'.
+    const parse = vi.fn().mockResolvedValue({ parsed_output: ANALYSIS, stop_reason: 'max_tokens' })
+    await expect(analyzeLecture({ messages: { parse } }, [{ type: 'text', text: 'x' }]))
+      .rejects.toThrow(/too long|truncat/i)
+  })
 })

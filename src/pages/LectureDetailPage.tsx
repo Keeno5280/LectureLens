@@ -101,9 +101,20 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
     console.log('⏰ Setting up polling fallback for processing lecture');
     const pollInterval = setInterval(async () => {
       console.log('🔄 Polling for lecture updates...');
+      // Select must match loadLecture()'s select exactly. This used to select only
+      // `processing_status, summary_overview, key_terms(*), flashcards(*)` — every
+      // other lecture column (key_points, processing_error, exam_questions, claims,
+      // distinctions, processed_at, ...) was silently missing from `data`, so the
+      // merge below quietly degraded the page versus what loadLecture() shows: a
+      // completed analysis could poll in with no Key Points section, and a fresh
+      // failure could poll in with the PREVIOUS processing_error (or none at all).
       const { data } = await supabase
         .from('lectures')
-        .select('processing_status, summary_overview, key_terms(*), flashcards(*)')
+        .select(`
+          *,
+          flashcards (*),
+          key_terms (*)
+        `)
         .eq('id', lectureId)
         .eq('user_id', user.id)
         .maybeSingle();
@@ -183,15 +194,26 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
   };
 
   const retryAnalysis = async (id: string) => {
-    const { error: resetError } = await supabase
-      .from('lectures')
-      .update({ processing_status: 'pending', processing_error: null })
-      .eq('id', id);
-    if (resetError) {
-      setToast({ message: `❌ Retry failed: ${resetError.message}`, type: 'error' });
-      return;
-    }
-
+    // Invoke FIRST, before touching the row. analyze-lecture is fully
+    // synchronous end to end (the verified run is ~60s: it awaits Claude and
+    // every DB write before responding), so by the time this call resolves
+    // one way or the other, the row already holds its true final state.
+    //
+    // That cuts both ways versus the old "reset to pending, then invoke"
+    // order:
+    //  - On invoke failure (an expired JWT on a tab left open overnight is
+    //    routine), the old code had already stranded the row at a fabricated
+    //    'pending' with processing_error wiped — its last real diagnostic
+    //    gone. Invoking first means a failure here leaves the row exactly as
+    //    it was: still 'failed' with its original error, which is what
+    //    "leave the row exactly as it was" requires.
+    //  - On invoke success, the edge function's own writes already carried
+    //    the row through 'analyzing' to its real terminal state ('completed',
+    //    or 'failed' via its fail() helper with a precise reason). Writing
+    //    processing_status: 'pending' here afterward would silently regress a
+    //    row that's already 'completed' back to 'pending' — with nothing left
+    //    to ever move it forward again. So there is nothing to reset on
+    //    success; just re-fetch to reflect what the function already wrote.
     const { error: invokeError } = await supabase.functions.invoke('analyze-lecture', {
       body: { lectureId: id },
     });
@@ -200,7 +222,7 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
       return;
     }
 
-    // Don't wait on realtime/polling to notice the retry started. If the realtime
+    // Don't wait on realtime/polling to notice the retry finished. If the realtime
     // channel happens to be disconnected right now, the polling effect's guard reads
     // the STALE local processing_status ('failed') and never resumes — the failed
     // card would sit there forever even though the retry succeeded. Refresh

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { Upload, Mic, ArrowLeft, Check, Presentation, Eye, Loader2, RefreshCw } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
 import { useAuth } from '../contexts/AuthContext';
@@ -166,6 +167,10 @@ export default function UploadPage() {
     const bumpProgress = (next: number) => setUploadProgress((p) => Math.max(p, next));
 
     let lectureId: string | undefined;
+    // Set when the failure is known to have already been recorded server-side
+    // (see the fnError handling below) so the catch block doesn't clobber it
+    // with a generic client-side message.
+    let serverAlreadyRecordedError = false;
 
     try {
       bumpProgress(10);
@@ -242,7 +247,17 @@ export default function UploadPage() {
       const { error: fnError } = await supabase.functions.invoke('analyze-lecture', {
         body: { lectureId: lecture.id },
       });
-      if (fnError) throw new Error(`AI analysis failed to start: ${fnError.message}`);
+      if (fnError) {
+        // FunctionsHttpError means analyze-lecture actually ran and returned a
+        // controlled non-2xx response — in this codebase that always means it
+        // went through its own fail() helper, which already wrote a precise
+        // processing_error to this row server-side. FunctionsFetchError (the
+        // request never reached the function — network/CORS) and
+        // FunctionsRelayError (rejected by the gateway before the function ran)
+        // mean nothing was recorded, so the catch block below still needs to.
+        serverAlreadyRecordedError = fnError instanceof FunctionsHttpError;
+        throw new Error(`AI analysis failed to start: ${fnError.message}`);
+      }
 
       bumpProgress(100);
       setUploadedLectureId(lecture.id);
@@ -252,7 +267,13 @@ export default function UploadPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Upload failed';
       let recoveryFailed = false;
-      if (lectureId) {
+      // Only write a client-side error when the failure was genuinely
+      // client-side (or never reached the server at all). When
+      // serverAlreadyRecordedError is true, the edge function's own fail()
+      // helper already wrote a precise, server-side reason to this row —
+      // overwriting it here would replace that precise reason with this
+      // generic "AI analysis failed to start: ..." string.
+      if (lectureId && !serverAlreadyRecordedError) {
         const { error: recoveryError } = await supabase.from('lectures').update({
           processing_status: 'failed', processing_error: message.slice(0, 500),
         }).eq('id', lectureId);
@@ -375,15 +396,14 @@ export default function UploadPage() {
   };
 
   const retryAnalysis = async (id: string) => {
-    const { error: resetError } = await supabase
-      .from('lectures')
-      .update({ processing_status: 'pending', processing_error: null })
-      .eq('id', id);
-    if (resetError) {
-      setToast({ message: `❌ Retry failed: ${resetError.message}`, type: 'error' });
-      return;
-    }
-
+    // Invoke FIRST — see the identical, longer comment on
+    // LectureDetailPage's retryAnalysis. analyze-lecture is fully
+    // synchronous (~60s verified), so a failed invoke means the row is
+    // exactly as it was ('failed' with its original processing_error, never
+    // wiped), and a successful invoke means the edge function's own writes
+    // have already carried the row to its true terminal state — nothing left
+    // for this handler to reset without regressing a 'completed' row back to
+    // a fabricated 'pending'.
     const { error: invokeError } = await supabase.functions.invoke('analyze-lecture', {
       body: { lectureId: id },
     });
