@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import Anthropic from 'npm:@anthropic-ai/sdk'
-import { authorizeLectureAccess } from '../_shared/auth.ts'
+import Anthropic from 'npm:@anthropic-ai/sdk@^0.120.0'
+import { authorizeLectureAccess, type AuthResult } from '../_shared/auth.ts'
 import { buildAnalysisInput, analyzeLecture } from '../_shared/claude.ts'
 
 const APP_ORIGIN = Deno.env.get('APP_ORIGIN') ?? 'http://localhost:5173'
@@ -28,23 +28,34 @@ Deno.serve(async (req) => {
   if (!lectureId) return json(400, { error: 'lectureId is required' })
 
   // Identity → ownership → privileged work. Never reorder.
-  const auth = await authorizeLectureAccess(
-    {
-      getUserFromToken: async (token) => {
-        const scoped = createClient(SUPABASE_URL, ANON_KEY, {
-          global: { headers: { Authorization: `Bearer ${token}` } },
-        })
-        const { data } = await scoped.auth.getUser()
-        return data.user ? { id: data.user.id } : null
+  let auth: AuthResult
+  try {
+    auth = await authorizeLectureAccess(
+      {
+        getUserFromToken: async (token) => {
+          const scoped = createClient(SUPABASE_URL, ANON_KEY, {
+            global: { headers: { Authorization: `Bearer ${token}` } },
+          })
+          const { data } = await scoped.auth.getUser()
+          return data.user ? { id: data.user.id } : null
+        },
+        getLecture: async (id) => {
+          const { data } = await admin.from('lectures').select('*').eq('id', id).maybeSingle()
+          return data ?? null
+        },
       },
-      getLecture: async (id) => {
-        const { data } = await admin.from('lectures').select('*').eq('id', id).maybeSingle()
-        return data ?? null
-      },
-    },
-    req.headers.get('Authorization'),
-    lectureId,
-  )
+      req.headers.get('Authorization'),
+      lectureId,
+    )
+  } catch (e) {
+    // getUserFromToken/getLecture can throw on a transient GoTrue/DB failure.
+    // Nothing is in flight yet — no processing_status write has happened —
+    // so this must NOT go through fail(); there is no lecture state to mark
+    // failed. Return a proper CORS'd JSON 500 instead of letting Deno's
+    // default handler produce a bare, header-less response that the browser
+    // would otherwise report as an opaque CORS error.
+    return json(500, { error: e instanceof Error ? e.message : String(e) })
+  }
   if (!auth.ok) return json(auth.status, { error: auth.error })
 
   const fail = async (message: string) => {
@@ -56,9 +67,10 @@ Deno.serve(async (req) => {
   }
 
   try {
-    await admin.from('lectures')
+    const { error: analyzingErr } = await admin.from('lectures')
       .update({ processing_status: 'analyzing', processing_error: null })
       .eq('id', lectureId)
+    if (analyzingErr) return await fail(`Could not mark lecture as analyzing: ${analyzingErr.message}`)
 
     let pdfBase64: string | undefined
     if ((auth.lecture.file_type ?? '').toLowerCase() === 'slides') {
@@ -78,7 +90,27 @@ Deno.serve(async (req) => {
       input,
     )
 
+    // Child-table writes run BEFORE the lecture is marked 'completed', and
+    // each is checked. A completed status must genuinely mean "everything
+    // landed" — checking these after the completed-write would leave a row
+    // marked completed that then has to be rolled back on failure.
+    if (analysis.flashcards.length) {
+      const { error: fcErr } = await admin.from('flashcards').insert(analysis.flashcards.map((f) => ({
+        lecture_id: lectureId, user_id: auth.userId,
+        question: f.front, answer: f.back,
+        difficulty: 'medium', is_auto_generated: true,
+      })))
+      if (fcErr) return await fail(`Could not save flashcards: ${fcErr.message}`)
+    }
+    if (analysis.important_terms.length) {
+      const { error: ktErr } = await admin.from('key_terms').insert(analysis.important_terms.map((t) => ({
+        lecture_id: lectureId, term: t.term, definition: t.definition,
+      })))
+      if (ktErr) return await fail(`Could not save key terms: ${ktErr.message}`)
+    }
+
     // Write to `lectures` — it is the ONLY table in the realtime publication.
+    // Runs LAST, only after every child-table write above has succeeded.
     const { error: upErr } = await admin.from('lectures').update({
       summary_overview: analysis.summary_overview,
       key_points: analysis.key_points,
@@ -91,19 +123,6 @@ Deno.serve(async (req) => {
       processed_at: new Date().toISOString(),
     }).eq('id', lectureId)
     if (upErr) return await fail(`Could not save analysis: ${upErr.message}`)
-
-    if (analysis.flashcards.length) {
-      await admin.from('flashcards').insert(analysis.flashcards.map((f) => ({
-        lecture_id: lectureId, user_id: auth.userId,
-        question: f.front, answer: f.back,
-        difficulty: 'medium', is_auto_generated: true,
-      })))
-    }
-    if (analysis.important_terms.length) {
-      await admin.from('key_terms').insert(analysis.important_terms.map((t) => ({
-        lecture_id: lectureId, term: t.term, definition: t.definition,
-      })))
-    }
 
     return json(200, { status: 'completed' })
   } catch (e) {
