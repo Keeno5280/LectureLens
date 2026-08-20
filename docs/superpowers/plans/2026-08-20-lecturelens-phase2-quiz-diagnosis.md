@@ -189,9 +189,29 @@ CREATE POLICY "Users can delete own quiz review items"
     WHERE r.id = quiz_review_items.review_id AND r.user_id = auth.uid()));
 ```
 
-- [ ] **Step 2: Apply the migration**
+- [ ] **Step 2: Apply the migration — TARGETED, NOT `db push`**
 
-Run: `npx supabase db push --project-ref hkqoesqiallwqbvuqgpp`
+**Do NOT run `npx supabase db push`.** The local `supabase/migrations/` directory and the
+remote migration history are out of sync: nine local migrations are absent from the remote
+history, and `db push` would apply all nine. One of them is
+`20250101000001_disable_rls_for_testing.sql`, which runs
+`ALTER TABLE lectures DISABLE ROW LEVEL SECURITY` — on a live project with real user accounts.
+Another is the entire base schema. This was verified against the remote history before this
+plan was executed.
+
+Apply **only this migration** via the Supabase MCP tool:
+
+```
+mcp__claude_ai_Supabase__apply_migration(
+  project_id: "hkqoesqiallwqbvuqgpp",
+  name: "quiz_diagnosis_tables",
+  query: <the full SQL from Step 1>
+)
+```
+
+The migration file still gets committed in Step 4 — it is the source of record for the schema
+even though the remote history will register it under its own version stamp, which is already
+true of every other migration in this project.
 
 Expected: both tables created, no error.
 
