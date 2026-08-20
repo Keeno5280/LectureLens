@@ -52,12 +52,19 @@ describe('normalizeTurns', () => {
   })
 
   it('merges three consecutive same-role turns into one', () => {
+    // A leading 'user' turn keeps this test isolated to pass-1 (merging):
+    // an all-assistant input would also be caught by pass 2 (drop leading
+    // assistant), which is covered separately below.
     const out = normalizeTurns([
+      { role: 'user', content: 'q0' },
       { role: 'assistant', content: 'a' },
       { role: 'assistant', content: 'b' },
       { role: 'assistant', content: 'c' },
     ])
-    expect(out).toEqual([{ role: 'assistant', content: 'a\nb\nc' }])
+    expect(out).toEqual([
+      { role: 'user', content: 'q0' },
+      { role: 'assistant', content: 'a\nb\nc' },
+    ])
   })
 
   it('leaves strictly alternating history untouched', () => {
@@ -70,14 +77,65 @@ describe('normalizeTurns', () => {
     expect(normalizeTurns(turns)).toEqual(turns)
   })
 
-  it("handles history that starts with an 'assistant' turn", () => {
+  it("drops a leading 'assistant' turn so messages[0] is always 'user'", () => {
+    // The Anthropic API rejects a request whose first message isn't
+    // 'user'. A last-10-rows window can easily start mid-conversation on
+    // an assistant reply — this used to be left untouched (a bug fixed in
+    // this round); it must now be dropped.
     const out = normalizeTurns([
       { role: 'assistant', content: 'a0' },
       { role: 'user', content: 'q1' },
     ])
+    expect(out).toEqual([{ role: 'user', content: 'q1' }])
+  })
+
+  it('drops the entire history when it is nothing but assistant turns, leaving []', () => {
+    const out = normalizeTurns([
+      { role: 'assistant', content: 'a1' },
+      { role: 'assistant', content: 'a2' },
+    ])
+    expect(out).toEqual([])
+  })
+
+  it('[assistant, user, assistant, user] becomes [user, assistant, user]', () => {
+    const out = normalizeTurns([
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a2' },
+      { role: 'user', content: 'u2' },
+    ])
     expect(out).toEqual([
-      { role: 'assistant', content: 'a0' },
-      { role: 'user', content: 'q1' },
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a2' },
+      { role: 'user', content: 'u2' },
+    ])
+  })
+
+  it('merges an UNMERGED multi-turn leading assistant run before dropping it — fails if drop ran before merge', () => {
+    // This is the case that makes pass order load-bearing rather than
+    // cosmetic. Input has two SEPARATE, not-yet-merged leading assistant
+    // turns. Correct (merge-then-drop): pass 1 collapses [a1,a2] into one
+    // leading assistant turn, so pass 2's single-check drop removes all
+    // of it, leaving [u1, a3].
+    //
+    // Under the wrong order (drop-then-merge), a single-check drop run
+    // FIRST on the raw, unmerged array only removes the a1 turn (the
+    // check is "is turns[0] assistant", not a loop) — it has no way to
+    // know a2 is also part of the same leading run without pass 1 having
+    // run first. The subsequent merge pass then finds no adjacent
+    // same-role turns left to merge (a2/u1/a3 all differ from their
+    // neighbor), so the result is left as [a2, u1, a3] — STILL starting
+    // with 'assistant', still an invalid request. Getting this test to
+    // pass requires merge to run before drop.
+    const out = normalizeTurns([
+      { role: 'assistant', content: 'a1' },
+      { role: 'assistant', content: 'a2' },
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a3' },
+    ])
+    expect(out).toEqual([
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a3' },
     ])
   })
 
