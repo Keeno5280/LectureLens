@@ -1,0 +1,10 @@
+project_id = "hkqoesqiallwqbvuqgpp"
+
+[functions.analyze-lecture]
+verify_jwt = true
+
+[functions.ai-tutor]
+verify_jwt = true
+
+[functions.process-slides]
+verify_jwt = true
