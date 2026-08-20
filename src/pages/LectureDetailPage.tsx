@@ -11,6 +11,14 @@ type ToastState = {
   type: 'success' | 'error';
 } | null;
 
+// A retry can only re-run analysis — it cannot manufacture a transcript. If the
+// lecture is audio/video and never got a transcript saved (e.g. the tab closed
+// mid-transcription), retrying analyze-lecture will just fail again with "No
+// transcript available." Tell the user to re-upload instead of promising a retry
+// that can't succeed.
+const needsReupload = (lecture: { file_type?: string; transcript?: string | null }) =>
+  (lecture.file_type === 'audio' || lecture.file_type === 'video') && !lecture.transcript;
+
 
 
 export default function LectureDetailPage({ lectureId }: { lectureId: string }) {
@@ -174,6 +182,24 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
+  const retryAnalysis = async (id: string) => {
+    const { error: resetError } = await supabase
+      .from('lectures')
+      .update({ processing_status: 'pending', processing_error: null })
+      .eq('id', id);
+    if (resetError) {
+      setToast({ message: `❌ Retry failed: ${resetError.message}`, type: 'error' });
+      return;
+    }
+
+    const { error: invokeError } = await supabase.functions.invoke('analyze-lecture', {
+      body: { lectureId: id },
+    });
+    if (invokeError) {
+      setToast({ message: `❌ Retry failed: ${invokeError.message}`, type: 'error' });
+    }
+  };
+
   const handleDeleteLecture = async () => {
     if (!lecture || !user) return;
 
@@ -257,7 +283,7 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
   }
 
   // Use relational data
-  const keyPoints: string[] = []; // keys_points column dropped
+  const keyPoints: string[] = Array.isArray(lecture?.key_points) ? lecture.key_points : [];
   const importantTerms = lecture.key_terms || [];
   const flashcards = lecture.flashcards || [];
 
@@ -299,16 +325,22 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
                 <span
                   className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium rounded-full ${lecture.processing_status === 'completed'
                     ? 'bg-green-100 text-green-800'
-                    : lecture.processing_status === 'pending'
-                      ? 'bg-yellow-100 text-yellow-800'
-                      : lecture.processing_status === 'processing'
-                        ? 'bg-blue-100 text-blue-800'
-                        : 'bg-red-100 text-red-800'
+                    : lecture.processing_status === 'failed'
+                      ? 'bg-red-100 text-red-800'
+                      : lecture.processing_status === 'pending'
+                        ? 'bg-yellow-100 text-yellow-800'
+                        : ['processing', 'transcribing', 'transcribed', 'analyzing'].includes(
+                            lecture.processing_status
+                          )
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-gray-100 text-gray-800'
                     }`}
                 >
                   {lecture.processing_status === 'completed' && '✓'}
                   {lecture.processing_status === 'pending' && '⏳'}
-                  {lecture.processing_status === 'processing' && '⚙️'}
+                  {['processing', 'transcribing', 'transcribed', 'analyzing'].includes(
+                    lecture.processing_status
+                  ) && '⚙️'}
                   {lecture.processing_status === 'failed' && '✕'}
                   {lecture.processing_status || 'Unknown'}
                 </span>
@@ -370,12 +402,20 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="space-y-6">
-          {lecture.processing_status === 'pending' || lecture.processing_status === 'processing' ? (
+          {['pending', 'processing', 'transcribing', 'transcribed', 'analyzing'].includes(
+            lecture.processing_status
+          ) ? (
             <div className="bg-white rounded-2xl shadow-md p-8">
               <div className="flex items-center gap-3 mb-6">
                 <Sparkles className="w-6 h-6 text-blue-600 animate-pulse" />
                 <h2 className="text-xl font-bold text-gray-900">
-                  {lecture.processing_status === 'processing' ? 'AI Analysis in Progress' : 'Waiting to Process'}
+                  {lecture.processing_status === 'transcribing'
+                    ? 'Transcribing in your browser…'
+                    : lecture.processing_status === 'transcribed' || lecture.processing_status === 'analyzing'
+                    ? 'Analyzing with AI…'
+                    : lecture.processing_status === 'processing'
+                    ? 'AI Analysis in Progress'
+                    : 'Waiting to Process'}
                 </h2>
               </div>
               <div className="animate-pulse space-y-4">
@@ -386,7 +426,11 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
                 <div className="h-4 bg-gray-200 rounded w-4/5"></div>
               </div>
               <p className="mt-6 text-center text-gray-600">
-                {lecture.processing_status === 'processing'
+                {lecture.processing_status === 'transcribing'
+                  ? "This can take a few minutes for longer recordings. Keep this tab open."
+                  : lecture.processing_status === 'transcribed' || lecture.processing_status === 'analyzing'
+                  ? 'Generating summary, key points, and study materials.'
+                  : lecture.processing_status === 'processing'
                   ? 'Your lecture is being analyzed by AI. This page will update automatically when complete.'
                   : 'Your lecture is in the queue. Processing will begin shortly.'}
               </p>
@@ -504,14 +548,48 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
                 </div>
               )}
             </>
-          ) : (
+          ) : lecture.processing_status === 'failed' ? (
             <div className="bg-white rounded-2xl shadow-md p-12 text-center">
               <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
                 <span className="text-4xl">✕</span>
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-3">Processing Failed</h3>
               <p className="text-gray-600 max-w-md mx-auto mb-6">
-                There was an error processing this lecture. Please try uploading again or contact support if the issue persists.
+                {lecture.processing_error ?? 'No further detail was recorded.'}
+              </p>
+              {needsReupload(lecture) ? (
+                <>
+                  <p className="text-gray-600 max-w-md mx-auto mb-6">
+                    No transcript was saved for this recording, so Retry can't succeed.
+                    Delete this lecture and re-upload it to try again.
+                  </p>
+                  <button
+                    onClick={handleDeleteLecture}
+                    className="inline-flex items-center gap-2 bg-red-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-red-700 transition"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                    Delete Lecture
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => retryAnalysis(lecture.id)}
+                  className="inline-flex items-center gap-2 bg-red-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-red-700 transition"
+                >
+                  <RefreshCw className="w-5 h-5" />
+                  Retry
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-md p-12 text-center">
+              <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <span className="text-4xl">?</span>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-3">Unknown Status</h3>
+              <p className="text-gray-600 max-w-md mx-auto mb-6">
+                This lecture is in an unrecognized state ({lecture.processing_status || 'none'}).
+                Try refreshing, or upload again if the problem continues.
               </p>
               <button
                 onClick={() => navigate('upload')}

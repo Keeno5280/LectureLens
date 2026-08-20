@@ -8,8 +8,16 @@ import { getTranscriber, isTranscribable } from '../lib/transcribe';
 
 type ToastState = {
   message: string;
-  type: 'success' | 'error';
+  type: 'success' | 'error' | 'info';
 } | null;
+
+// A retry can only re-run analysis — it cannot manufacture a transcript. If the
+// lecture is audio/video and never got a transcript saved (e.g. the tab closed
+// mid-transcription), retrying analyze-lecture will just fail again with "No
+// transcript available." Tell the user to re-upload instead of promising a retry
+// that can't succeed.
+const needsReupload = (lecture: { file_type?: string; transcript?: string | null }) =>
+  (lecture.file_type === 'audio' || lecture.file_type === 'video') && !lecture.transcript;
 
 type UploadStatus = 'idle' | 'uploading' | 'success' | 'error';
 
@@ -369,6 +377,27 @@ export default function UploadPage() {
     navigate('dashboard');
   };
 
+  const retryAnalysis = async (id: string) => {
+    const { error: resetError } = await supabase
+      .from('lectures')
+      .update({ processing_status: 'pending', processing_error: null })
+      .eq('id', id);
+    if (resetError) {
+      setToast({ message: `❌ Retry failed: ${resetError.message}`, type: 'error' });
+      return;
+    }
+
+    const { error: invokeError } = await supabase.functions.invoke('analyze-lecture', {
+      body: { lectureId: id },
+    });
+    if (invokeError) {
+      setToast({ message: `❌ Retry failed: ${invokeError.message}`, type: 'error' });
+      return;
+    }
+
+    setToast({ message: 'Retry started. This page will update automatically.', type: 'info' });
+  };
+
   if (uploadStatus === 'uploading') {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -419,13 +448,22 @@ export default function UploadPage() {
                     className={`inline-flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-full ${
                       uploadedLecture.processing_status === 'completed'
                         ? 'bg-green-100 text-green-800'
-                        : uploadedLecture.processing_status === 'processing'
+                        : uploadedLecture.processing_status === 'failed'
+                        ? 'bg-red-100 text-red-800'
+                        : uploadedLecture.processing_status === 'processing' ||
+                          uploadedLecture.processing_status === 'transcribing' ||
+                          uploadedLecture.processing_status === 'transcribed' ||
+                          uploadedLecture.processing_status === 'analyzing'
                         ? 'bg-blue-100 text-blue-800'
                         : 'bg-yellow-100 text-yellow-800'
                     }`}
                   >
                     {uploadedLecture.processing_status === 'completed' && '✓'}
-                    {uploadedLecture.processing_status === 'processing' && (
+                    {uploadedLecture.processing_status === 'failed' && '✕'}
+                    {(uploadedLecture.processing_status === 'processing' ||
+                      uploadedLecture.processing_status === 'transcribing' ||
+                      uploadedLecture.processing_status === 'transcribed' ||
+                      uploadedLecture.processing_status === 'analyzing') && (
                       <Loader2 className="w-3 h-3 animate-spin" />
                     )}
                     {uploadedLecture.processing_status === 'pending' && '⏳'}
@@ -460,11 +498,62 @@ export default function UploadPage() {
               </div>
             )}
 
+            {uploadedLecture.processing_status === 'transcribing' && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                  <p className="text-sm text-blue-800 font-medium">
+                    Transcribing in your browser…
+                  </p>
+                </div>
+                <p className="text-xs text-blue-700">
+                  This can take a few minutes for longer recordings. Keep this tab open.
+                </p>
+              </div>
+            )}
+
+            {(uploadedLecture.processing_status === 'transcribed' ||
+              uploadedLecture.processing_status === 'analyzing') && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                  <p className="text-sm text-blue-800 font-medium">
+                    Analyzing with AI…
+                  </p>
+                </div>
+                <p className="text-xs text-blue-700">
+                  Generating summary, key points, and study materials.
+                </p>
+              </div>
+            )}
+
             {uploadedLecture.processing_status === 'completed' && (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-4">
                 <p className="text-sm text-green-800 font-medium">
                   ✓ AI analysis complete! Your lecture notes are ready.
                 </p>
+              </div>
+            )}
+
+            {uploadedLecture.processing_status === 'failed' && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 mt-4">
+                <p className="font-medium text-red-800">Processing failed</p>
+                <p className="mt-1 text-sm text-red-700">
+                  {uploadedLecture.processing_error ?? 'No further detail was recorded.'}
+                </p>
+                {needsReupload(uploadedLecture) ? (
+                  <p className="mt-3 text-sm text-red-700">
+                    No transcript was saved for this recording, so Retry can't succeed.
+                    Delete this lecture from the dashboard and re-upload it to try again.
+                  </p>
+                ) : (
+                  <button
+                    onClick={() => retryAnalysis(uploadedLecture.id)}
+                    className="mt-3 rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700"
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             )}
           </div>
