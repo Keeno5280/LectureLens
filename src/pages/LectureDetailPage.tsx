@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Lecture } from '../lib/supabase';
-import { ArrowLeft, Download, Mail, Trash2, Sparkles, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Trash2, Sparkles, RefreshCw } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
 import { useAuth } from '../contexts/AuthContext';
 import Toast from '../components/Toast';
@@ -167,14 +167,6 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
     }
   };
 
-  const handleDownloadPDF = () => {
-    alert('PDF download functionality would be implemented here');
-  };
-
-  const handleEmailNotes = () => {
-    alert('Email functionality would be implemented here');
-  };
-
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
     console.log('🔄 Manual refresh triggered');
@@ -292,6 +284,7 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
 
   // Use relational data
   const keyPoints: string[] = Array.isArray(lecture?.key_points) ? lecture.key_points : [];
+  const examQuestions: string[] = Array.isArray(lecture?.exam_questions) ? lecture.exam_questions : [];
   const importantTerms = lecture.key_terms || [];
   const flashcards = lecture.flashcards || [];
 
@@ -370,20 +363,6 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
               >
                 <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 {isRefreshing ? 'Refreshing...' : 'Refresh'}
-              </button>
-              <button
-                onClick={handleDownloadPDF}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition"
-              >
-                <Download className="w-4 h-4" />
-                PDF
-              </button>
-              <button
-                onClick={handleEmailNotes}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition"
-              >
-                <Mail className="w-4 h-4" />
-                Email
               </button>
               <button
                 onClick={handleDeleteLecture}
@@ -470,6 +449,25 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
                           {index + 1}
                         </span>
                         <span className="text-gray-700 leading-relaxed">{point}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {examQuestions.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-md p-8">
+                  <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">
+                    <span className="text-2xl">📝</span>
+                    <span>Exam Questions</span>
+                  </h2>
+                  <ul className="space-y-3">
+                    {examQuestions.map((question: string, index: number) => (
+                      <li key={index} className="flex gap-3">
+                        <span className="flex-shrink-0 w-6 h-6 bg-green-100 rounded-full flex items-center justify-center text-green-700 text-sm font-medium mt-1">
+                          {index + 1}
+                        </span>
+                        <span className="text-gray-700 leading-relaxed">{question}</span>
                       </li>
                     ))}
                   </ul>
