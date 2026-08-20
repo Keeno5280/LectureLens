@@ -147,7 +147,7 @@ CORS is locked to the app origin, replacing `Access-Control-Allow-Origin: '*'`.
 ### 1. `analyze-lecture`
 
 **Request** `POST /functions/v1/analyze-lecture` · `{ lectureId: string }` · caller's JWT
-**Response** `202 { status: 'analyzing' }` — results arrive over realtime
+**Response** `200 { status: 'completed' }` — the handler awaits the Claude call and the DB write, so the work is genuinely done when it returns. Realtime still delivers the row update to any other open client.
 
 Dispatch by `file_type`:
 

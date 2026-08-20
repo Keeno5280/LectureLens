@@ -788,7 +788,7 @@ Thin Deno handler. All logic under test already; this wires it.
 
 **Interfaces:**
 - Consumes: `authorizeLectureAccess` (5), `buildAnalysisInput`/`analyzeLecture` (6)
-- Produces: `POST /functions/v1/analyze-lecture` with body `{ lectureId: string }`, returning `202 {status:'completed'}` or `{4xx,5xx} {error}`
+- Produces: `POST /functions/v1/analyze-lecture` with body `{ lectureId: string }`, returning `200 {status:'completed'}` or `{4xx,5xx} {error}`
 
 - [ ] **Step 1: Write `supabase/config.toml`**
 
