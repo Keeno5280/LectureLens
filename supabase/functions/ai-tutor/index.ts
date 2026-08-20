@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@^0.120.0';
-import { buildTutorContext, type ContextLecture } from '../_shared/context.ts';
+import { buildTutorContext, normalizeTurns, type ContextLecture, type Turn } from '../_shared/context.ts';
 import { TUTOR_SYSTEM } from '../_shared/prompts.ts';
 
 const APP_ORIGIN = Deno.env.get('APP_ORIGIN') ?? 'http://localhost:5173';
@@ -22,8 +22,8 @@ interface TutorRequest {
   complexityLevel?: 'simple' | 'medium' | 'advanced';
   contextLectures?: string[];
   contextSlides?: string[];
-  classId?: string;
-  assignmentPrompt?: string;
+  classId?: string | null;
+  assignmentPrompt?: string | null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -113,7 +113,15 @@ Deno.serve(async (req: Request) => {
     // model reads them oldest-first.
     const priorTurns = (priorRows ?? []).reverse() as { role: string; content: string }[];
 
-    // Store user message
+    // Store user message. Deliberately inserted BEFORE the Claude call
+    // below rather than after: if the call fails (rate limit, timeout,
+    // network), the question is still preserved instead of silently lost.
+    // The tradeoff is an orphaned 'user' row with no reply — this is safe
+    // specifically because normalizeTurns() below merges consecutive
+    // same-role turns before every request, so an orphan here (or one left
+    // over from the old n8n pipeline, which has the same failure mode)
+    // never produces two consecutive 'user' turns in messages[] and can
+    // never permanently wedge the conversation with a 400 from the API.
     const { error: insertUserErr } = await admin.from('tutor_messages').insert({
       conversation_id: conversationId,
       role: 'user',
@@ -131,7 +139,37 @@ Deno.serve(async (req: Request) => {
     // branch and it queried every lecture row for every user. The filter
     // here must actually apply; if there is no class to scope to, we say so
     // honestly instead of falling back to an unfiltered query.
-    const scopeClassId = classId || conversation.class_id || null;
+    //
+    // A body-supplied classId is NOT already trustworthy the way
+    // conversation.class_id is: the conversation row was just verified to
+    // belong to the caller, but classId comes straight off the request body
+    // and nothing has checked it belongs to them. Without this check, any
+    // authenticated user could pass another user's class UUID here and get
+    // Claude answering from that user's transcripts on the service-role
+    // client below. A mismatch is treated as a straight 403, the same way
+    // the conversation-ownership check above does — this is a deliberate
+    // request to read another user's data, not an ambiguous "no class"
+    // case, so it gets denied rather than quietly degraded to empty context.
+    let scopeClassId: string | null;
+    if (classId) {
+      const { data: classRow, error: classErr } = await admin
+        .from('classes')
+        .select('user_id')
+        .eq('id', classId)
+        .maybeSingle();
+      if (classErr) {
+        return json(500, { error: `Could not verify class ownership: ${classErr.message}` });
+      }
+      if (!classRow || classRow.user_id !== callerId) {
+        return json(403, { error: 'forbidden: class does not belong to the caller' });
+      }
+      scopeClassId = classId;
+    } else {
+      // conversation.class_id needs no re-check here — the conversation's
+      // ownership was already verified above and its class_id was set
+      // under RLS when the conversation was created.
+      scopeClassId = conversation.class_id;
+    }
     let lectures: ContextLecture[] = [];
     if (scopeClassId) {
       const { data: lectureRows, error: lecErr } = await admin
@@ -147,9 +185,11 @@ Deno.serve(async (req: Request) => {
     }
 
     // Explicitly selected lectures/slides (if the caller passed any) get
-    // folded in as supplementary context; gatherContext/extractSources are
-    // the original real code in this file and are kept as-is.
-    const extraContext = await gatherContext(admin, contextLectures, contextSlides);
+    // folded in as supplementary context. gatherContext is scoped to the
+    // caller below (see its definition) — contextLectures/contextSlides are
+    // client-supplied ids and, unlike classId/conversationId, were never
+    // otherwise checked against callerId.
+    const extraContext = await gatherContext(admin, contextLectures, contextSlides, callerId);
     const sources = extractSources(extraContext);
 
     const context =
@@ -158,6 +198,17 @@ Deno.serve(async (req: Request) => {
 
     const anthropic = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! });
 
+    // Normalize AFTER appending the new user turn, not before: an orphaned
+    // 'user' row at the tail of priorTurns (see the insert comment above)
+    // would otherwise sit immediately next to the fresh user turn we just
+    // appended, still leaving two consecutive 'user' entries right at the
+    // history/new-message boundary.
+    const rawTurns: Turn[] = [
+      ...priorTurns.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+      { role: 'user' as const, content: message },
+    ];
+    const turns = normalizeTurns(rawTurns);
+
     const msg = await anthropic.messages.create({
       model: 'claude-opus-5',
       max_tokens: 16000,
@@ -165,10 +216,7 @@ Deno.serve(async (req: Request) => {
         { type: 'text', text: TUTOR_SYSTEM },
         { type: 'text', text: context, cache_control: { type: 'ephemeral' } },
       ],
-      messages: [
-        ...priorTurns.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-        { role: 'user' as const, content: message },
-      ],
+      messages: turns,
     });
 
     const answer = msg.content
@@ -199,18 +247,26 @@ Deno.serve(async (req: Request) => {
 async function gatherContext(
   supabase: any,
   lectureIds: string[],
-  slideIds: string[]
+  slideIds: string[],
+  callerId: string
 ): Promise<string> {
   const contextParts: string[] = [];
 
-  // Gather lecture context
+  // Gather lecture context. Scoped to the caller — lectureIds is a
+  // client-supplied array of ids, not something already checked against
+  // callerId the way conversationId/classId are above. Without the
+  // user_id filter, any authenticated caller could pass another user's
+  // lecture id here and have its content folded into their answer (IDOR).
   if (lectureIds.length > 0) {
-    const { data: lectures } = await supabase
+    const { data: lectures, error: lecturesErr } = await supabase
       .from('lectures')
       .select('title, summary_overview, key_points, important_terms')
-      .in('id', lectureIds);
+      .in('id', lectureIds)
+      .eq('user_id', callerId);
 
-    if (lectures) {
+    if (lecturesErr) {
+      console.error('gatherContext: could not load lectures', lecturesErr);
+    } else if (lectures) {
       for (const lecture of lectures) {
         contextParts.push(`\n## Lecture: ${lecture.title}`);
         if (lecture.summary_overview) {
@@ -231,14 +287,21 @@ async function gatherContext(
     }
   }
 
-  // Gather slide context
+  // Gather slide context. slides has no user_id of its own — ownership is
+  // via its parent lecture — so this scopes through an inner join on
+  // lectures(user_id). `!inner` is required: without it, eq() on an
+  // embedded column doesn't exclude non-matching rows, it just leaves the
+  // embedded object null on them, which would defeat the filter entirely.
   if (slideIds.length > 0) {
-    const { data: slides } = await supabase
+    const { data: slides, error: slidesErr } = await supabase
       .from('slides')
-      .select('slide_number, extracted_text, summary')
-      .in('id', slideIds);
+      .select('slide_number, extracted_text, summary, lectures!inner(user_id)')
+      .in('id', slideIds)
+      .eq('lectures.user_id', callerId);
 
-    if (slides) {
+    if (slidesErr) {
+      console.error('gatherContext: could not load slides', slidesErr);
+    } else if (slides) {
       for (const slide of slides) {
         contextParts.push(
           `\n## Slide ${slide.slide_number}: ${slide.summary || slide.extracted_text}`
