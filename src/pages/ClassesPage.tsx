@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import type { Class } from '../lib/supabase';
-import { BookOpen, Plus, ArrowLeft, Trash2, LogOut } from 'lucide-react';
+import { BookOpen, Plus, ArrowLeft, Trash2, LogOut, Pencil, X } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
 import { useAuth } from '../contexts/AuthContext';
+import { useSemester } from '../contexts/SemesterContext';
 import Toast from '../components/Toast';
 
 type ToastState = {
@@ -14,6 +15,7 @@ type ToastState = {
 export default function ClassesPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
+  const { selectedSemester } = useSemester();
   const [classes, setClasses] = useState<Class[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [className, setClassName] = useState('');
@@ -22,14 +24,38 @@ export default function ClassesPage() {
   const [toast, setToast] = useState<ToastState>(null);
   const [userName, setUserName] = useState<string>('Student');
 
+  // Edit State
+  const [editingClass, setEditingClass] = useState<Class | null>(null);
+  const [editClassName, setEditClassName] = useState('');
+  const [editProfessor, setEditProfessor] = useState('');
+
   useEffect(() => {
     loadClasses();
     loadUserName();
-  }, [user]);
+
+    const subscription = supabase
+      .channel('classes_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'classes',
+          filter: `user_id=eq.${user?.id}`,
+        },
+        () => {
+          loadClasses();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [user, selectedSemester]);
 
   const loadUserName = async () => {
     if (!user) return;
-
     try {
       const { data: profileData } = await supabase
         .from('profiles')
@@ -50,14 +76,18 @@ export default function ClassesPage() {
       setLoading(false);
       return;
     }
-
     try {
-      const { data } = await supabase
+      let query = supabase
         .from('classes')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
+      if (selectedSemester) {
+        query = query.eq('semester_id', selectedSemester.id);
+      }
+
+      const { data } = await query;
       if (data) setClasses(data);
     } catch (error) {
       console.error('Error loading classes:', error);
@@ -87,6 +117,7 @@ export default function ClassesPage() {
         user_id: user.id,
         name: className,
         professor: professor || null,
+        semester_id: selectedSemester?.id,
       });
 
       if (error) {
@@ -112,6 +143,43 @@ export default function ClassesPage() {
     }
   };
 
+  const handleUpdateClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClass || !editClassName) return;
+
+    try {
+      const { error } = await supabase
+        .from('classes')
+        .update({
+          name: editClassName,
+          professor: editProfessor || null,
+        })
+        .eq('id', editingClass.id);
+
+      if (error) throw error;
+
+      setToast({
+        message: '✅ Class updated successfully.',
+        type: 'success',
+      });
+
+      setEditingClass(null);
+      loadClasses();
+    } catch (error) {
+      console.error('Error updating class:', error);
+      setToast({
+        message: 'Failed to update class. Please try again.',
+        type: 'error',
+      });
+    }
+  };
+
+  const openEditModal = (cls: Class) => {
+    setEditingClass(cls);
+    setEditClassName(cls.name);
+    setEditProfessor(cls.professor || '');
+  };
+
   const handleDeleteClass = async (classId: string) => {
     if (!confirm('Are you sure you want to delete this class? All associated lectures will also be deleted.')) {
       return;
@@ -119,14 +187,11 @@ export default function ClassesPage() {
 
     try {
       const { error } = await supabase.from('classes').delete().eq('id', classId);
-
       if (error) throw error;
-
       setToast({
         message: 'Class deleted successfully.',
         type: 'success',
       });
-
       loadClasses();
     } catch (error) {
       setToast({
@@ -215,12 +280,22 @@ export default function ClassesPage() {
                   <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
                     <BookOpen className="w-6 h-6 text-blue-600" />
                   </div>
-                  <button
-                    onClick={() => handleDeleteClass(cls.id)}
-                    className="text-gray-400 hover:text-red-600 transition"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openEditModal(cls)}
+                      className="text-gray-400 hover:text-blue-600 transition"
+                      title="Edit Class"
+                    >
+                      <Pencil className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteClass(cls.id)}
+                      className="text-gray-400 hover:text-red-600 transition"
+                      title="Delete Class"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
                 </div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">{cls.name}</h3>
                 {cls.professor && (
@@ -238,6 +313,7 @@ export default function ClassesPage() {
         )}
       </main>
 
+      {/* Add Class Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
@@ -289,6 +365,65 @@ export default function ClassesPage() {
                   className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
                 >
                   Add Class
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Class Modal */}
+      {editingClass && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 relative">
+            <button
+              onClick={() => setEditingClass(null)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">Edit Class</h2>
+            <form onSubmit={handleUpdateClass} className="space-y-6">
+              <div>
+                <label htmlFor="editClassName" className="block text-sm font-medium text-gray-700 mb-2">
+                  Class Name
+                </label>
+                <input
+                  id="editClassName"
+                  type="text"
+                  value={editClassName}
+                  onChange={(e) => setEditClassName(e.target.value)}
+                  required
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="editProfessor" className="block text-sm font-medium text-gray-700 mb-2">
+                  Professor (Optional)
+                </label>
+                <input
+                  id="editProfessor"
+                  type="text"
+                  value={editProfessor}
+                  onChange={(e) => setEditProfessor(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingClass(null)}
+                  className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+                >
+                  Save Changes
                 </button>
               </div>
             </form>

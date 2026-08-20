@@ -199,16 +199,28 @@ export default function UploadPage() {
       setUploadProgress(85);
 
       const webhookUrl = 'https://n8n-e2ph.onrender.com/webhook/5f34c729-47b8-4f87-9323-f7462f7cfd7c';
+      
+      console.log('🚀 Triggering n8n webhook for:', fileName);
+      console.log('📦 Payload:', { id: lecture.id, title, file_type: fileType });
 
-      fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(lecture),
-      }).catch((err) => {
-        console.warn('Webhook notification failed:', err);
-      });
+      try {
+        const response = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(lecture),
+          keepalive: true,
+        });
+
+        if (response.ok) {
+           console.log('✅ Webhook triggered successfully:', await response.text());
+        } else {
+           console.error('❌ Webhook failed:', response.status, await response.text());
+        }
+      } catch (err) {
+        console.error('❌ Webhook notification failed:', err);
+      }
 
       setUploadProgress(100);
       setUploadedLectureId(lecture.id);

@@ -24,6 +24,28 @@ export type Class = {
   professor: string;
   created_at: string;
   updated_at: string;
+  semester_id?: string;
+};
+
+export type Semester = {
+  id: string;
+  user_id: string;
+  name: string;
+  start_date?: string;
+  end_date?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Schedule = {
+  id: string;
+  user_id: string;
+  semester_id: string;
+  file_url: string;
+  processing_status: 'pending' | 'processing' | 'completed' | 'failed';
+  raw_data?: any;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Lecture = {
@@ -35,9 +57,8 @@ export type Lecture = {
   recording_date: string;
   processing_status: 'pending' | 'processing' | 'completed' | 'failed';
   summary_overview: string;
-  key_points: string[];
-  important_terms: Record<string, string>;
-  exam_questions: string[];
   created_at: string;
   updated_at: string;
+  key_terms?: Array<{ term: string; definition: string }>;
+  flashcards?: Array<{ question: string; answer: string }>;
 };

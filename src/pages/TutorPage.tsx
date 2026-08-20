@@ -1,22 +1,19 @@
 import { useEffect, useState, useRef } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import {
   Send,
-  Lightbulb,
-  FileText,
-  Brain,
-  HelpCircle,
   BookOpen,
-  Save,
-  CreditCard,
   Trash2,
-  X,
-  Plus,
-  Check,
   Loader2,
   MessageSquare,
+  PenTool,
+  Layout,
+  Plus,
+  Brain
 } from 'lucide-react';
 import { useNavigate } from '../hooks/useNavigate';
+import PaperEditor from '../components/PaperEditor';
 
 const MOCK_USER_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -32,9 +29,9 @@ interface Message {
 interface Conversation {
   id: string;
   title: string;
-  context_lectures: string[];
-  context_slides: string[];
+  created_at: string;
   updated_at: string;
+  class_id?: string;
 }
 
 interface QuickAction {
@@ -57,31 +54,56 @@ interface ClassOption {
   professor: string;
 }
 
+type ViewMode = 'study' | 'write';
+
 export default function TutorPage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [viewMode, setViewMode] = useState<ViewMode>('study');
+
+  // Data State
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
+  const [classes, setClasses] = useState<ClassOption[]>([]);
+
+  // UI State
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
-  const [availableContext, setAvailableContext] = useState<ContextItem[]>([]);
-  const [selectedContext, setSelectedContext] = useState<string[]>([]);
-  const [showContextSelector, setShowContextSelector] = useState(false);
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
-  const [selectedMessageForSave, setSelectedMessageForSave] = useState<Message | null>(null);
-  const [saveTitle, setSaveTitle] = useState('');
-  const [saveCategory, setSaveCategory] = useState<'note' | 'flashcard' | 'summary'>('note');
-  const [classes, setClasses] = useState<ClassOption[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [isLoadingClasses, setIsLoadingClasses] = useState(false);
   const [classesError, setClassesError] = useState<string>('');
 
+  // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadInitialData();
+
+    // Check for pending global query + class
+    const pendingQuery = sessionStorage.getItem('tutor_initial_query');
+    const pendingClass = sessionStorage.getItem('tutor_initial_class');
+
+    if (pendingClass) {
+      setSelectedClassId(pendingClass);
+      sessionStorage.removeItem('tutor_initial_class');
+    }
+
+    if (pendingQuery) {
+      setInputMessage(pendingQuery);
+      sessionStorage.removeItem('tutor_initial_query');
+      // Auto-send if class is selected (which it should be now)
+      setTimeout(() => {
+        if (pendingClass) {
+          const sendBtn = document.querySelector('button[aria-label="Send Message"]') || document.querySelector('.lucide-send')?.closest('button');
+          if (sendBtn instanceof HTMLElement) sendBtn.click();
+        } else {
+          inputRef.current?.focus();
+        }
+      }, 800);
+    }
   }, []);
 
   useEffect(() => {
@@ -92,12 +114,10 @@ export default function TutorPage() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, viewMode]); // Scroll when messages change or layout changes
 
   useEffect(() => {
-    // Clear messages when switching classes to show fresh chat
     setMessages([]);
-    loadAvailableContext();
     loadConversations();
   }, [selectedClassId]);
 
@@ -109,7 +129,6 @@ export default function TutorPage() {
     await Promise.all([
       loadConversations(),
       loadQuickActions(),
-      loadAvailableContext(),
       loadClasses(),
     ]);
   };
@@ -117,15 +136,12 @@ export default function TutorPage() {
   const loadClasses = async () => {
     setIsLoadingClasses(true);
     setClassesError('');
-
     try {
       const { data, error } = await supabase
         .from('classes')
         .select('id, name, professor')
         .order('name');
-
       if (error) throw error;
-
       setClasses(data || []);
     } catch (error) {
       console.error('Error loading classes:', error);
@@ -140,7 +156,7 @@ export default function TutorPage() {
       let query = supabase
         .from('tutor_conversations')
         .select('*')
-        .eq('user_id', MOCK_USER_ID);
+        .eq('user_id', user?.id);
 
       if (selectedClassId) {
         query = query.eq('class_id', selectedClassId);
@@ -150,7 +166,10 @@ export default function TutorPage() {
 
       if (data && data.length > 0) {
         setConversations(data);
-        setCurrentConversation(data[0]);
+        // Only auto-select the first conversation if we aren't already viewing one
+        if (!currentConversation) {
+          setCurrentConversation(data[0]);
+        }
       } else {
         setConversations([]);
         setCurrentConversation(null);
@@ -186,81 +205,37 @@ export default function TutorPage() {
         .select('*')
         .is('user_id', null)
         .order('sort_order');
-
       setQuickActions(data || []);
     } catch (error) {
       console.error('Error loading quick actions:', error);
     }
   };
 
-  const loadAvailableContext = async () => {
-    try {
-      let query = supabase
-        .from('lectures')
-        .select('id, title, recording_date, class_id')
-        .eq('processing_status', 'completed')
-        .order('recording_date', { ascending: false })
-        .limit(20);
 
-      if (selectedClassId) {
-        query = query.eq('class_id', selectedClassId);
-      }
-
-      const [lecturesRes, slidesRes] = await Promise.all([
-        query,
-        supabase
-          .from('slides')
-          .select('id, slide_number, summary, lecture_id, lectures(title)')
-          .order('created_at', { ascending: false })
-          .limit(50),
-      ]);
-
-      const contextItems: ContextItem[] = [];
-
-      if (lecturesRes.data) {
-        lecturesRes.data.forEach((lecture) => {
-          contextItems.push({
-            id: lecture.id,
-            type: 'lecture',
-            title: lecture.title,
-            subtitle: new Date(lecture.recording_date).toLocaleDateString(),
-          });
-        });
-      }
-
-      setAvailableContext(contextItems);
-    } catch (error) {
-      console.error('Error loading context:', error);
-    }
-  };
 
   const createNewConversation = async () => {
-    try {
-      const { data } = await supabase
-        .from('tutor_conversations')
-        .insert({
-          user_id: MOCK_USER_ID,
-          title: 'New Conversation',
-          class_id: selectedClassId || null,
-          context_lectures: JSON.stringify([]),
-          context_slides: JSON.stringify([]),
-        })
-        .select()
-        .single();
+    // Logic handled dynamically in sendMessage if no conversation selected
+    // But explicit "New Chat" button needs this:
+    const { data } = await supabase
+      .from('tutor_conversations')
+      .insert({
+        user_id: user?.id,
+        title: 'New Conversation',
+        class_id: selectedClassId || null,
+      })
+      .select()
+      .single();
 
-      if (data) {
-        setConversations([data, ...conversations]);
-        setCurrentConversation(data);
-        setMessages([]);
-      }
-    } catch (error) {
-      console.error('Error creating conversation:', error);
+    if (data) {
+      setConversations([data, ...conversations]);
+      setCurrentConversation(data);
+      setMessages([]);
     }
   };
 
-  const sendMessage = async (queryType: string = 'general', complexityLevel: string = 'medium') => {
+  const sendMessage = async () => {
     if (!inputMessage.trim()) return;
-    if (!selectedClassId) return;
+    if (!selectedClassId) return; // Enforce class selection
 
     const userMessage = inputMessage.trim();
     setInputMessage('');
@@ -272,11 +247,9 @@ export default function TutorPage() {
       const { data } = await supabase
         .from('tutor_conversations')
         .insert({
-          user_id: MOCK_USER_ID,
+          user_id: user?.id,
           title: userMessage.substring(0, 50),
           class_id: selectedClassId,
-          context_lectures: JSON.stringify([]),
-          context_slides: JSON.stringify([]),
         })
         .select()
         .single();
@@ -291,62 +264,53 @@ export default function TutorPage() {
       }
     }
 
+    if (!conversationToUse) return; // Strict check for TS
+
     const userMsgData = {
-      id: crypto.randomUUID(),
       conversation_id: conversationToUse.id,
       role: 'user',
       content: userMessage,
-      created_at: new Date().toISOString(),
     };
 
-    setMessages([...messages, userMsgData as Message]);
+    setMessages(prev => [...prev, { ...userMsgData, id: 'temp-user', created_at: new Date().toISOString() } as Message]);
 
     try {
       await supabase.from('tutor_messages').insert(userMsgData);
 
-      const apiUrl = 'https://n8n-e2ph.onrender.com/webhook/4109c225-7faa-4672-80a6-57c05e383026';
-      const headers = {
-        'Content-Type': 'application/json',
-      };
+      // Use the newly created webhook path
+      const apiUrl = 'https://n8n-e2ph.onrender.com/webhook/ai-tutor';
 
-      // Validate selectedClassId is a valid UUID format (8-4-4-4-12 hex characters)
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const isValidUUID = selectedClassId && uuidRegex.test(selectedClassId);
-
-      // Build request body - only include class_id if it's a valid UUID
-      // Never send empty string as Supabase expects null or valid UUID
-      const requestBody: { question: string; class_id?: string | null } = {
+      const requestBody = {
         question: userMessage,
+        class_id: selectedClassId,
+        conversation_id: conversationToUse.id,
+        // Add context for Paper Lab if available
+        assignment_prompt: (document.querySelector('textarea[placeholder*="assignment prompt"]') as HTMLTextAreaElement)?.value || '',
+        // If we had a state for paper content, we'd pass it here. 
+        // For now, n8n can fetch it from DB using conversation_id
       };
-
-      if (isValidUUID) {
-        requestBody.class_id = selectedClassId;
-      } else {
-        requestBody.class_id = null;
-      }
-
-      console.log('Sending to API:', requestBody);
 
       const response = await fetch(apiUrl, {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       });
 
-      if (!response.ok) throw new Error('The AI tutor failed to respond');
+      if (!response.ok) throw new Error('AI Response Failed');
 
       const result = await response.json();
 
       const assistantMsgData = {
-        id: crypto.randomUUID(),
         conversation_id: conversationToUse.id,
         role: 'assistant',
         content: result.answer || 'No response received',
-        created_at: new Date().toISOString(),
       };
 
       await supabase.from('tutor_messages').insert(assistantMsgData);
-      setMessages((prev) => [...prev, assistantMsgData as Message]);
+
+      // Refresh messages to get real IDs
+      loadMessages(conversationToUse.id);
+
     } catch (error) {
       console.error('Error sending message:', error);
       alert('The AI tutor failed to respond');
@@ -356,528 +320,256 @@ export default function TutorPage() {
   };
 
   const handleQuickAction = (action: QuickAction) => {
-    const template = action.query_template;
-    setInputMessage(template);
+    setInputMessage(action.query_template);
     inputRef.current?.focus();
   };
 
-  const saveResponse = async () => {
-    if (!selectedMessageForSave || !saveTitle.trim()) return;
+  const handleAskAI = (text: string, context: string) => {
+    const prompt = context
+      ? `I am working on this assignment: "${context}".\n\nI need help with this text:\n"${text}"`
+      : `I need help with this text from my paper:\n"${text}"`;
 
-    try {
-      await supabase.from('saved_tutor_responses').insert({
-        user_id: MOCK_USER_ID,
-        message_id: selectedMessageForSave.id,
-        title: saveTitle,
-        category: saveCategory,
-        tags: JSON.stringify([]),
-      });
-
-      if (saveCategory === 'flashcard') {
-        await supabase.from('tutor_flashcards').insert({
-          user_id: MOCK_USER_ID,
-          message_id: selectedMessageForSave.id,
-          question: saveTitle,
-          answer: selectedMessageForSave.content,
-          difficulty: 'medium',
-        });
-      }
-
-      setShowSaveDialog(false);
-      setSelectedMessageForSave(null);
-      setSaveTitle('');
-      alert('Response saved successfully!');
-    } catch (error) {
-      console.error('Error saving response:', error);
-      alert('Failed to save response');
-    }
+    setInputMessage(prompt);
+    // Optional: Auto-focus input
+    inputRef.current?.focus();
   };
 
-  const deleteConversation = async (id: string) => {
+  const deleteConversation = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     if (!confirm('Delete this conversation?')) return;
-
-    try {
-      await supabase.from('tutor_conversations').delete().eq('id', id);
-      setConversations(conversations.filter((c) => c.id !== id));
-      if (currentConversation?.id === id) {
-        setCurrentConversation(conversations[0] || null);
-      }
-    } catch (error) {
-      console.error('Error deleting conversation:', error);
-    }
-  };
-
-  const getQueryTypeIcon = (type?: string) => {
-    switch (type) {
-      case 'explain':
-        return <Lightbulb className="h-4 w-4" />;
-      case 'summarize':
-        return <FileText className="h-4 w-4" />;
-      case 'mnemonic':
-        return <Brain className="h-4 w-4" />;
-      case 'question':
-        return <HelpCircle className="h-4 w-4" />;
-      default:
-        return <MessageSquare className="h-4 w-4" />;
-    }
+    await supabase.from('tutor_conversations').delete().eq('id', id);
+    setConversations(prev => prev.filter(c => c.id !== id));
+    if (currentConversation?.id === id) setCurrentConversation(null);
   };
 
   return (
-    <div className="h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex">
-      <div className="w-80 bg-white border-r border-slate-200 flex flex-col">
-        <div className="p-4 border-b border-slate-200">
+    <div className="h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex overflow-hidden">
+
+      {/* Sidebar - Always visible */}
+      <div className="w-80 bg-white border-r border-slate-200 flex flex-col flex-shrink-0 z-20 shadow-sm">
+        <div className="p-4 border-b border-slate-100 bg-slate-50/50">
           <button
             onClick={() => navigate('dashboard')}
-            className="text-sm text-slate-600 hover:text-blue-600 mb-4 transition-colors"
+            className="flex items-center gap-2 text-sm text-slate-500 hover:text-blue-600 mb-6 transition-colors font-medium"
           >
             ← Back to Dashboard
           </button>
+
+          {/* Mode Switcher */}
+          <div className="bg-slate-200/50 p-1 rounded-xl flex mb-2">
+            <button
+              onClick={() => setViewMode('study')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all ${viewMode === 'study' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Layout className="w-4 h-4" />
+              Study Chat
+            </button>
+            <button
+              onClick={() => setViewMode('write')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all ${viewMode === 'write' ? 'bg-white text-purple-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <PenTool className="w-4 h-4" />
+              Paper Lab
+            </button>
+          </div>
+          <p className="text-[10px] text-center text-slate-400 font-medium tracking-wide uppercase">
+            {viewMode === 'write' ? 'Split Screen Mode' : 'Standard Chat Mode'}
+          </p>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">
-            Chat History
-          </h3>
-          {conversations.length === 0 ? (
-            <div className="text-center py-8 px-4">
-              <MessageSquare className="h-12 w-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-sm text-slate-500">
-                No conversations yet
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                Start chatting to create a conversation
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {conversations.map((conv) => (
+          <div className="flex items-center justify-between mb-3 px-1">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+              Conversations
+            </h3>
+            <button onClick={createNewConversation} className="text-blue-600 hover:text-blue-700">
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {conversations.map((conv) => (
               <button
                 key={conv.id}
-                onClick={() => setCurrentConversation(conv)}
-                className={`w-full text-left p-3 rounded-lg transition-all ${
-                  currentConversation?.id === conv.id
-                    ? 'bg-blue-50 border border-blue-200'
-                    : 'bg-slate-50 border border-transparent hover:border-slate-300'
-                }`}
+                onClick={() => {
+                  setCurrentConversation(conv);
+                  if (conv.class_id && conv.class_id !== selectedClassId) {
+                    setSelectedClassId(conv.class_id);
+                  }
+                }}
+                className={`w-full text-left p-3 rounded-lg border transition-all hover:shadow-sm ${currentConversation?.id === conv.id
+                  ? 'bg-blue-50 border-blue-200 shadow-sm'
+                  : 'bg-white border-transparent hover:border-slate-200'
+                  }`}
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-800 truncate">{conv.title}</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      {new Date(conv.updated_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteConversation(conv.id);
-                    }}
-                    className="ml-2 p-1 text-slate-400 hover:text-red-600 transition-colors"
+                <p className={`text-sm font-medium truncate ${currentConversation?.id === conv.id ? 'text-blue-700' : 'text-slate-700'}`}>{conv.title}</p>
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-[10px] text-slate-400">{new Date(conv.created_at).toLocaleDateString()}</span>
+                  <div
+                    onClick={(e) => deleteConversation(conv.id, e)}
+                    className="text-slate-300 hover:text-red-500 p-1 rounded hover:bg-red-50 transition"
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                    <Trash2 className="w-3 h-3" />
+                  </div>
                 </div>
               </button>
             ))}
-            </div>
-          )}
-        </div>
 
-        <div className="p-4 border-t border-slate-200">
-          <button
-            onClick={() => setShowContextSelector(true)}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all text-sm font-medium"
-          >
-            <BookOpen className="h-4 w-4" />
-            Select Context ({selectedContext.length})
-          </button>
+            {conversations.length === 0 && (
+              <div className="text-center py-8 px-4 border-2 border-dashed border-slate-100 rounded-xl">
+                <MessageSquare className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                <p className="text-xs text-slate-400">No chats yet.</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col">
-        {!selectedClassId ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center py-16 max-w-xl mx-auto px-6">
-              <BookOpen className="h-20 w-20 text-slate-300 mx-auto mb-6" />
-              <h3 className="text-2xl font-bold text-slate-700 mb-3">
-                Select a Class to Start
-              </h3>
-              <p className="text-slate-500 mb-8">
-                Choose a class below to access your AI tutor and start asking questions about your course materials.
-              </p>
+      {/* Main Content Area - Handles Split or Full View */}
+      <div className="flex-1 flex overflow-hidden relative">
 
+        {/* Paper Editor (Visible only in Write Mode) */}
+        {viewMode === 'write' && (
+          <div className="flex-[1.4] border-r border-slate-200 bg-white h-full overflow-hidden flex flex-col shadow-[4px_0_24px_-12px_rgba(0,0,0,0.1)] z-10">
+            {currentConversation && user ? (
+              <PaperEditor
+                conversationId={currentConversation.id}
+                userId={user.id} // Should use real user from AuthContext in prod
+                onAskAI={handleAskAI}
+              />
+            ) : (
+              <div className="flex-1 flex items-center justify-center p-8 text-center bg-slate-50/50">
+                <div>
+                  <div className="w-16 h-16 bg-purple-100 text-purple-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <PenTool className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-700">Select a Conversation</h3>
+                  <p className="text-slate-500 max-w-xs mx-auto mt-2">
+                    Open a chat to load its associated paper draft. Every chat has one paper.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* AI Chat (Always Visible, but adapts width) */}
+        <div className="flex-1 flex flex-col h-full bg-slate-50 relative">
+
+          {/* Class Selector Header */}
+          <div className="bg-white border-b border-slate-200 px-6 py-4 shadow-sm flex items-center justify-between flex-shrink-0">
+            <div>
+              <h1 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                {viewMode === 'write' ? (
+                  <>
+                    <Brain className="w-5 h-5 text-purple-600" />
+                    AI Co-Pilot
+                  </>
+                ) : (
+                  <>
+                    <Brain className="w-6 h-6 text-blue-600" />
+                    AI Tutor
+                  </>
+                )}
+              </h1>
+            </div>
+
+            {/* Class Dropdown */}
+            <div className="flex items-center gap-2">
               {isLoadingClasses ? (
-                <div className="flex items-center justify-center gap-2 px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading classes...
-                </div>
-              ) : classesError ? (
-                <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600 mb-6">
-                  {classesError}
-                </div>
+                <span className="text-xs text-slate-400"><Loader2 className="w-3 h-3 animate-spin" /></span>
               ) : (
                 <select
                   value={selectedClassId}
                   onChange={(e) => setSelectedClassId(e.target.value)}
-                  className="w-full max-w-md mx-auto px-4 py-3 bg-white border border-slate-300 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer hover:border-slate-400 transition-colors mb-6"
+                  className="text-sm border-none bg-slate-100 hover:bg-slate-200 rounded-lg px-3 py-1.5 focus:ring-0 cursor-pointer font-medium text-slate-700 transition"
                 >
-                  <option value="" disabled>
-                    Select a class...
-                  </option>
-                  {classes.map((cls) => (
-                    <option key={cls.id} value={cls.id}>
-                      {cls.name} - {cls.professor}
-                    </option>
-                  ))}
+                  <option value="" disabled>Select Class...</option>
+                  {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               )}
-
-              <div className="inline-flex items-center gap-2 px-5 py-3 bg-blue-50 text-blue-700 rounded-lg border border-blue-200">
-                <Brain className="h-5 w-5" />
-                <span className="font-medium">Ready to help with any class!</span>
-              </div>
             </div>
           </div>
-        ) : (
-          <>
-            <div className="bg-white border-b border-slate-200 px-6 py-4">
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <h1 className="text-xl font-bold text-slate-800">
-                    {currentConversation ? currentConversation.title : 'AI Tutor'}
-                  </h1>
-                  <p className="text-sm text-slate-500 mt-1">
-                    Ask me anything about your uploaded materials
-                  </p>
-                </div>
-                <div className="ml-6">
-                  <label className="block text-xs font-medium text-slate-600 mb-2">
-                    Select Class
-                  </label>
-                  {isLoadingClasses ? (
-                    <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-500">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Loading...
-                    </div>
-                  ) : classesError ? (
-                    <div className="px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
-                      {classesError}
-                    </div>
-                  ) : (
-                    <div className="relative">
-                      <select
-                        value={selectedClassId}
-                        onChange={(e) => setSelectedClassId(e.target.value)}
-                        className={`px-4 py-2 bg-white border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-[200px] cursor-pointer transition-all ${
-                          selectedClassId
-                            ? 'border-blue-500 text-slate-800 font-medium bg-blue-50'
-                            : 'border-slate-300 text-slate-500 hover:border-slate-400'
-                        }`}
-                      >
-                        <option value="" disabled>
-                          Select a class...
-                        </option>
-                        {classes.map((cls) => (
-                          <option key={cls.id} value={cls.id}>
-                            {cls.name} - {cls.professor}
-                          </option>
-                        ))}
-                      </select>
-                      {selectedClassId && (
-                        <div className="absolute -bottom-5 left-0 right-0 text-center">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
-                            <Check className="h-3 w-3" />
-                            Active
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              <div className="max-w-4xl mx-auto space-y-4">
-                {messages.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Brain className="h-16 w-16 text-slate-300 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-slate-700 mb-2">
-                      Start a conversation
-                    </h3>
-                    <p className="text-slate-500 mb-6">
-                      Ask questions, request explanations, or get help understanding your course
-                      materials for {classes.find(c => c.id === selectedClassId)?.name}
-                    </p>
-                    <div className="flex flex-wrap gap-2 justify-center max-w-2xl mx-auto">
-                      {quickActions.map((action) => (
+          {/* Chat Messages */}
+          <div className="flex-1 overflow-y-auto px-4 py-6 scroll-smooth">
+            {messages.length === 0 && !selectedClassId ? (
+              <div className="h-full flex flex-col items-center justify-center text-center p-6 opacity-60">
+                <BookOpen className="w-12 h-12 text-slate-300 mb-4" />
+                <p className="text-slate-500 font-medium">Please select a class to begin.</p>
+              </div>
+            ) : (
+              <div className="space-y-6 max-w-2xl mx-auto">
+                {messages.length === 0 && (
+                  <div className="text-center py-10">
+                    <p className="text-sm text-slate-400">Start asking questions about your lectures!</p>
+                    <div className="flex flex-wrap gap-2 justify-center mt-4">
+                      {quickActions.slice(0, 3).map(qa => (
                         <button
-                          key={action.id}
-                          onClick={() => handleQuickAction(action)}
-                          className="px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-all text-sm font-medium"
+                          key={qa.id}
+                          onClick={() => handleQuickAction(qa)}
+                          className="text-xs bg-white border border-slate-200 px-3 py-1.5 rounded-full hover:border-blue-400 hover:text-blue-600 transition"
                         >
-                          {action.label}
+                          {qa.label}
                         </button>
                       ))}
                     </div>
                   </div>
-                ) : null}
+                )}
 
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-3xl ${
-                        message.role === 'user'
-                          ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm'
-                          : 'bg-white text-slate-800 rounded-2xl rounded-tl-sm shadow-md border border-slate-200'
-                      } px-6 py-4`}
-                    >
-                      {message.role === 'assistant' && message.query_type && (
-                        <div className="flex items-center gap-2 mb-2 text-slate-500">
-                          {getQueryTypeIcon(message.query_type)}
-                          <span className="text-xs font-medium uppercase">
-                            {message.query_type}
-                          </span>
-                        </div>
-                      )}
-
-                      <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
-
-                      {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-slate-200">
-                          <p className="text-xs font-medium text-slate-500 mb-2">Sources:</p>
-                          <div className="space-y-1">
-                            {message.sources.map((source, idx) => (
-                              <div key={idx} className="text-xs text-slate-600 flex items-center gap-2">
-                                <BookOpen className="h-3 w-3" />
-                                {source.reference}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {message.role === 'assistant' && (
-                        <div className="mt-4 flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              setSelectedMessageForSave(message);
-                              setSaveTitle(message.content.substring(0, 50));
-                              setShowSaveDialog(true);
-                            }}
-                            className="px-3 py-1 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all text-xs font-medium flex items-center gap-1"
-                          >
-                            <Save className="h-3 w-3" />
-                            Save
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedMessageForSave(message);
-                              setSaveCategory('flashcard');
-                              setSaveTitle('Q: ' + messages[messages.indexOf(message) - 1]?.content.substring(0, 50));
-                              setShowSaveDialog(true);
-                            }}
-                            className="px-3 py-1 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all text-xs font-medium flex items-center gap-1"
-                          >
-                            <CreditCard className="h-3 w-3" />
-                            Flashcard
-                          </button>
-                        </div>
-                      )}
-
-                      <p className="text-xs mt-3 opacity-60">
-                        {new Date(message.created_at).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </p>
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] rounded-2xl px-5 py-3.5 shadow-sm text-sm leading-relaxed ${msg.role === 'user'
+                      ? 'bg-blue-600 text-white rounded-tr-none'
+                      : 'bg-white text-slate-700 border border-slate-200 rounded-tl-none'
+                      }`}>
+                      <p className="whitespace-pre-wrap">{msg.content}</p>
                     </div>
                   </div>
                 ))}
-
                 {isTyping && (
                   <div className="flex justify-start">
-                    <div className="bg-white text-slate-800 rounded-2xl rounded-tl-sm shadow-md border border-slate-200 px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                        <span className="text-sm text-slate-600">Thinking...</span>
-                      </div>
+                    <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-none px-4 py-3 shadow-sm flex items-center gap-2">
+                      <Loader2 className="w-3 h-3 text-blue-500 animate-spin" />
+                      <span className="text-xs text-slate-400 font-medium">Thinking...</span>
                     </div>
                   </div>
                 )}
-
                 <div ref={messagesEndRef} />
               </div>
-            </div>
-
-            <div className="bg-white border-t border-slate-200 px-6 py-4">
-              <div className="max-w-4xl mx-auto">
-                <div className="flex gap-2 mb-3 overflow-x-auto pb-2">
-                  {quickActions.slice(0, 5).map((action) => (
-                    <button
-                      key={action.id}
-                      onClick={() => handleQuickAction(action)}
-                      className="flex-shrink-0 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-all text-sm flex items-center gap-2"
-                    >
-                      {action.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-end gap-3">
-                  <div className="flex-1 relative">
-                    <input
-                      ref={inputRef}
-                      type="text"
-                      value={inputMessage}
-                      onChange={(e) => setInputMessage(e.target.value)}
-                      onKeyPress={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          sendMessage();
-                        }
-                      }}
-                      placeholder="Ask a question about your materials..."
-                      className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-12"
-                      disabled={isTyping}
-                    />
-                  </div>
-                  <button
-                    onClick={() => sendMessage()}
-                    disabled={!inputMessage.trim() || isTyping}
-                    className="px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium flex items-center gap-2"
-                  >
-                    <Send className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {showContextSelector && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
-            <div className="flex items-center justify-between p-6 border-b border-slate-200">
-              <h3 className="text-xl font-bold text-slate-800">Select Context Materials</h3>
-              <button
-                onClick={() => setShowContextSelector(false)}
-                className="text-slate-500 hover:text-slate-700"
-              >
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
-              <p className="text-sm text-slate-600 mb-4">
-                Choose which lectures and materials the AI should reference when answering your
-                questions.
-              </p>
-
-              <div className="space-y-2">
-                {availableContext.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      setSelectedContext((prev) =>
-                        prev.includes(item.id)
-                          ? prev.filter((id) => id !== item.id)
-                          : [...prev, item.id]
-                      );
-                    }}
-                    className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
-                      selectedContext.includes(item.id)
-                        ? 'border-blue-600 bg-blue-50'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium text-slate-800">{item.title}</p>
-                        {item.subtitle && (
-                          <p className="text-sm text-slate-500 mt-1">{item.subtitle}</p>
-                        )}
-                      </div>
-                      {selectedContext.includes(item.id) && (
-                        <Check className="h-5 w-5 text-blue-600" />
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="p-6 border-t border-slate-200">
-              <button
-                onClick={() => setShowContextSelector(false)}
-                className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all font-medium"
-              >
-                Done ({selectedContext.length} selected)
-              </button>
-            </div>
+            )}
           </div>
-        </div>
-      )}
 
-      {showSaveDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-md w-full">
-            <div className="flex items-center justify-between p-6 border-b border-slate-200">
-              <h3 className="text-xl font-bold text-slate-800">Save Response</h3>
-              <button
-                onClick={() => setShowSaveDialog(false)}
-                className="text-slate-500 hover:text-slate-700"
-              >
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            <div className="p-6">
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-slate-700 mb-2">Title</label>
+          {/* Input Area */}
+          <div className="p-4 bg-white border-t border-slate-200 z-10">
+            <div className="max-w-2xl mx-auto flex items-end gap-2">
+              <div className="flex-1 bg-slate-100 rounded-xl px-4 py-3 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:bg-white transition-all border border-transparent focus-within:border-blue-200">
                 <input
-                  type="text"
-                  value={saveTitle}
-                  onChange={(e) => setSaveTitle(e.target.value)}
-                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Enter a title..."
+                  ref={inputRef}
+                  className="w-full bg-transparent border-none focus:ring-0 p-0 text-sm text-slate-800 placeholder-slate-400 resize-none"
+                  placeholder={viewMode === 'write' ? "Ask for help with your paper..." : "Ask a question..."}
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
                 />
               </div>
-
-              <div className="mb-6">
-                <label className="block text-sm font-medium text-slate-700 mb-2">Save As</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['note', 'flashcard', 'summary'] as const).map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setSaveCategory(cat)}
-                      className={`px-4 py-2 rounded-lg border-2 transition-all capitalize ${
-                        saveCategory === cat
-                          ? 'border-blue-600 bg-blue-50 text-blue-700'
-                          : 'border-slate-200 text-slate-700 hover:border-slate-300'
-                      }`}
-                    >
-                      {cat}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               <button
-                onClick={saveResponse}
-                disabled={!saveTitle.trim()}
-                className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium"
+                onClick={() => sendMessage()}
+                disabled={!inputMessage.trim() || isTyping || !selectedClassId}
+                className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-blue-200 transition-all active:scale-95"
               >
-                Save
+                <Send className="w-4 h-4" />
               </button>
             </div>
           </div>
+
         </div>
-      )}
-    </div>
+      </div>
+    </div >
   );
 }

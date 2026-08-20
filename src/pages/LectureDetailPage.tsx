@@ -11,15 +11,7 @@ type ToastState = {
   type: 'success' | 'error';
 } | null;
 
-function parseMaybeJson(value: any, fallback: any) {
-  if (!value) return fallback;
-  if (typeof value === 'object') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
-}
+
 
 export default function LectureDetailPage({ lectureId }: { lectureId: string }) {
   const navigate = useNavigate();
@@ -95,7 +87,7 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
       console.log('🔄 Polling for lecture updates...');
       const { data } = await supabase
         .from('lectures')
-        .select('processing_status, summary_overview, key_points, important_terms, flashcards')
+        .select('processing_status, summary_overview, key_terms(*), flashcards(*)')
         .eq('id', lectureId)
         .eq('user_id', user.id)
         .maybeSingle();
@@ -127,7 +119,11 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
     try {
       const { data, error } = await supabase
         .from('lectures')
-        .select('*')
+        .select(`
+          *,
+          flashcards (*),
+          key_terms (*)
+        `)
         .eq('id', lectureId)
         .eq('user_id', user.id)
         .maybeSingle();
@@ -144,9 +140,8 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
           status: data.processing_status,
           hasData: {
             summary: !!data.summary_overview,
-            keyPoints: !!data.key_points,
-            terms: !!data.important_terms,
-            flashcards: !!data.flashcards,
+            terms: !!data.key_terms?.length,
+            flashcards: !!data.flashcards?.length,
           },
         });
         setLecture(data);
@@ -261,9 +256,10 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
     );
   }
 
-  const keyPoints = parseMaybeJson(lecture.key_points, []);
-  const importantTerms = parseMaybeJson(lecture.important_terms, []);
-  const flashcards = parseMaybeJson(lecture.flashcards, []);
+  // Use relational data
+  const keyPoints: string[] = []; // keys_points column dropped
+  const importantTerms = lecture.key_terms || [];
+  const flashcards = lecture.flashcards || [];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -301,15 +297,14 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
               </h1>
               <div className="flex items-center gap-3">
                 <span
-                  className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium rounded-full ${
-                    lecture.processing_status === 'completed'
-                      ? 'bg-green-100 text-green-800'
-                      : lecture.processing_status === 'pending'
+                  className={`inline-flex items-center gap-1 px-3 py-1 text-sm font-medium rounded-full ${lecture.processing_status === 'completed'
+                    ? 'bg-green-100 text-green-800'
+                    : lecture.processing_status === 'pending'
                       ? 'bg-yellow-100 text-yellow-800'
                       : lecture.processing_status === 'processing'
-                      ? 'bg-blue-100 text-blue-800'
-                      : 'bg-red-100 text-red-800'
-                  }`}
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-red-100 text-red-800'
+                    }`}
                 >
                   {lecture.processing_status === 'completed' && '✓'}
                   {lecture.processing_status === 'pending' && '⏳'}

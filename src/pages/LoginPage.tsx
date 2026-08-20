@@ -11,17 +11,21 @@ import {
   Lock,
   ArrowRight,
   Clock,
+  ArrowLeft,
+  Send,
 } from 'lucide-react';
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const [isSignUp, setIsSignUp] = useState(false);
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [resetSent, setResetSent] = useState(false);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,6 +65,24 @@ export default function LoginPage() {
       }
     } catch (err: any) {
       setError(err.message || 'Authentication failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin,
+      });
+      if (error) throw error;
+      setResetSent(true);
+    } catch (err: any) {
+      setError(err.message || 'Failed to send reset email');
     } finally {
       setLoading(false);
     }
@@ -156,169 +178,275 @@ export default function LoginPage() {
           </div>
 
           {/* Urgency Banner */}
-          <div className="bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200 rounded-xl p-4 mb-6">
-            <div className="flex items-start gap-3">
-              <Clock className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 className="font-semibold text-orange-900 mb-1">Limited Time: Early Access</h3>
-                <p className="text-sm text-orange-800">
-                  Sign up now to lock in <strong>unlimited uploads</strong> for your first semester
-                </p>
+          {!isForgotPassword && (
+            <div className="bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-200 rounded-xl p-4 mb-6">
+              <div className="flex items-start gap-3">
+                <Clock className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="font-semibold text-orange-900 mb-1">Limited Time: Early Access</h3>
+                  <p className="text-sm text-orange-800">
+                    Sign up now to lock in <strong>unlimited uploads</strong> for your first semester
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Auth Card */}
           <div className="bg-white rounded-2xl shadow-xl p-8 border border-slate-200">
-            <div className="text-center mb-8">
-              <h2 className="text-3xl font-bold text-slate-900 mb-2">
-                {isSignUp ? 'Create Your Account' : 'Welcome Back'}
-              </h2>
-              <p className="text-slate-600">
-                {isSignUp
-                  ? 'Start transforming your lectures today'
-                  : 'Continue your learning journey'}
-              </p>
-            </div>
-
-            {error && (
-              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-800">{error}</p>
+            {resetSent ? (
+              <div className="text-center">
+                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Mail className="w-8 h-8 text-green-600" />
+                </div>
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">Check your email</h2>
+                <p className="text-slate-600 mb-8">
+                  We've sent a password reset link to<br />
+                  <span className="font-medium text-slate-900">{email}</span>
+                </p>
+                <button
+                  onClick={() => {
+                    setResetSent(false);
+                    setIsForgotPassword(false);
+                  }}
+                  className="w-full bg-slate-100 text-slate-700 py-4 rounded-xl font-semibold hover:bg-slate-200 transition-colors"
+                >
+                  Back to Sign In
+                </button>
               </div>
-            )}
+            ) : isForgotPassword ? (
+              <>
+                <div className="text-center mb-8">
+                  <button
+                    onClick={() => setIsForgotPassword(false)}
+                    className="absolute left-8 top-8 text-slate-400 hover:text-slate-600 transition"
+                  >
+                    <ArrowLeft className="w-5 h-5" />
+                  </button>
+                  <h2 className="text-3xl font-bold text-slate-900 mb-2">Reset Password</h2>
+                  <p className="text-slate-600">
+                    Enter your email to receive a reset link
+                  </p>
+                </div>
 
-            <form onSubmit={handleAuth} className="space-y-5">
-              {isSignUp && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="firstName" className="block text-sm font-medium text-slate-700 mb-2">
-                      First Name
-                    </label>
-                    <input
-                      id="firstName"
-                      type="text"
-                      value={firstName}
-                      onChange={(e) => setFirstName(e.target.value)}
-                      required
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition outline-none text-slate-900"
-                      placeholder="John"
-                    />
+                {error && (
+                  <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-800">{error}</p>
                   </div>
+                )}
+
+                <form onSubmit={handleResetPassword} className="space-y-5">
                   <div>
-                    <label htmlFor="lastName" className="block text-sm font-medium text-slate-700 mb-2">
-                      Last Name
+                    <label htmlFor="reset-email" className="block text-sm font-medium text-slate-700 mb-2">
+                      Email Address
                     </label>
-                    <input
-                      id="lastName"
-                      type="text"
-                      value={lastName}
-                      onChange={(e) => setLastName(e.target.value)}
-                      required
-                      className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition outline-none text-slate-900"
-                      placeholder="Doe"
-                    />
+                    <div className="relative">
+                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                      <input
+                        id="reset-email"
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition outline-none text-slate-900"
+                        placeholder="you@university.edu"
+                      />
+                    </div>
                   </div>
-                </div>
-              )}
 
-              <div>
-                <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition outline-none text-slate-900"
-                    placeholder="you@university.edu"
-                  />
-                </div>
-              </div>
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-4 rounded-xl font-semibold text-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {loading ? (
+                      <span>Sending...</span>
+                    ) : (
+                      <>
+                        <span>Send Reset Link</span>
+                        <Send className="w-5 h-5" />
+                      </>
+                    )}
+                  </button>
+                </form>
 
-              <div>
-                <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-2">
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    minLength={6}
-                    className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition outline-none text-slate-900"
-                    placeholder="••••••••"
-                  />
+                <div className="mt-6 text-center">
+                  <button
+                    onClick={() => setIsForgotPassword(false)}
+                    className="text-sm font-medium text-slate-600 hover:text-blue-600 transition"
+                  >
+                    Back to Sign In
+                  </button>
                 </div>
-                {isSignUp && (
-                  <p className="text-xs text-slate-500 mt-2">Must be at least 6 characters</p>
+              </>
+            ) : (
+              // Login / Signup Form
+              <>
+                <div className="text-center mb-8">
+                  <h2 className="text-3xl font-bold text-slate-900 mb-2">
+                    {isSignUp ? 'Create Your Account' : 'Welcome Back'}
+                  </h2>
+                  <p className="text-slate-600">
+                    {isSignUp
+                      ? 'Start transforming your lectures today'
+                      : 'Continue your learning journey'}
+                  </p>
+                </div>
+
+                {error && (
+                  <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-sm text-red-800">{error}</p>
+                  </div>
                 )}
-              </div>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-4 rounded-xl font-semibold text-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 group"
-              >
-                {loading ? (
-                  <span>Processing...</span>
-                ) : (
-                  <>
-                    <span>{isSignUp ? 'Start Learning Smarter' : 'Sign In'}</span>
-                    <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                  </>
-                )}
-              </button>
-            </form>
-
-            {/* Benefits Reminder */}
-            {isSignUp && (
-              <div className="mt-6 pt-6 border-t border-slate-200">
-                <p className="text-xs text-slate-600 mb-3 font-medium">What you get instantly:</p>
-                <div className="space-y-2">
-                  {['AI lecture summaries', 'Smart flashcard generation', '24/7 AI tutor access'].map(
-                    (benefit, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
-                        <span className="text-sm text-slate-700">{benefit}</span>
+                <form onSubmit={handleAuth} className="space-y-5">
+                  {isSignUp && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label htmlFor="firstName" className="block text-sm font-medium text-slate-700 mb-2">
+                          First Name
+                        </label>
+                        <input
+                          id="firstName"
+                          type="text"
+                          value={firstName}
+                          onChange={(e) => setFirstName(e.target.value)}
+                          required
+                          className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition outline-none text-slate-900"
+                          placeholder="John"
+                        />
                       </div>
-                    )
+                      <div>
+                        <label htmlFor="lastName" className="block text-sm font-medium text-slate-700 mb-2">
+                          Last Name
+                        </label>
+                        <input
+                          id="lastName"
+                          type="text"
+                          value={lastName}
+                          onChange={(e) => setLastName(e.target.value)}
+                          required
+                          className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition outline-none text-slate-900"
+                          placeholder="Doe"
+                        />
+                      </div>
+                    </div>
                   )}
-                </div>
-              </div>
-            )}
 
-            {/* Toggle Auth Mode */}
-            <div className="mt-6 text-center">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsSignUp(!isSignUp);
-                  setError('');
-                  setFirstName('');
-                  setLastName('');
-                }}
-                className="text-sm text-slate-600 hover:text-blue-600 transition"
-              >
-                {isSignUp ? (
-                  <>
-                    Already have an account?{' '}
-                    <span className="font-semibold text-blue-600">Sign in</span>
-                  </>
-                ) : (
-                  <>
-                    Don't have an account?{' '}
-                    <span className="font-semibold text-blue-600">Sign up free</span>
-                  </>
+                  <div>
+                    <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
+                      Email Address
+                    </label>
+                    <div className="relative">
+                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                      <input
+                        id="email"
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition outline-none text-slate-900"
+                        placeholder="you@university.edu"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label htmlFor="password" className="block text-sm font-medium text-slate-700">
+                        Password
+                      </label>
+                      {!isSignUp && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsForgotPassword(true);
+                            setError('');
+                          }}
+                          className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                        >
+                          Forgot Password?
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                      <input
+                        id="password"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        minLength={6}
+                        className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition outline-none text-slate-900"
+                        placeholder="••••••••"
+                      />
+                    </div>
+                    {isSignUp && (
+                      <p className="text-xs text-slate-500 mt-2">Must be at least 6 characters</p>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-4 rounded-xl font-semibold text-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 group"
+                  >
+                    {loading ? (
+                      <span>Processing...</span>
+                    ) : (
+                      <>
+                        <span>{isSignUp ? 'Start Learning Smarter' : 'Sign In'}</span>
+                        <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                {/* Benefits Reminder */}
+                {isSignUp && (
+                  <div className="mt-6 pt-6 border-t border-slate-200">
+                    <p className="text-xs text-slate-600 mb-3 font-medium">What you get instantly:</p>
+                    <div className="space-y-2">
+                      {['AI lecture summaries', 'Smart flashcard generation', '24/7 AI tutor access'].map(
+                        (benefit, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0" />
+                            <span className="text-sm text-slate-700">{benefit}</span>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
                 )}
-              </button>
-            </div>
+
+                {/* Toggle Auth Mode */}
+                <div className="mt-6 text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSignUp(!isSignUp);
+                      setError('');
+                      setFirstName('');
+                      setLastName('');
+                    }}
+                    className="text-sm text-slate-600 hover:text-blue-600 transition"
+                  >
+                    {isSignUp ? (
+                      <>
+                        Already have an account?{' '}
+                        <span className="font-semibold text-blue-600">Sign in</span>
+                      </>
+                    ) : (
+                      <>
+                        Don't have an account?{' '}
+                        <span className="font-semibold text-blue-600">Sign up free</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Trust Indicators */}

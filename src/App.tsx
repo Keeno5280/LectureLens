@@ -8,9 +8,12 @@ import ClassNotesPage from './pages/ClassNotesPage';
 import LectureDetailPage from './pages/LectureDetailPage';
 import SlideViewerPage from './pages/SlideViewerPage';
 import TutorPage from './pages/TutorPage';
-import DebugPanel from './components/DebugPanel';
+import UpdatePasswordPage from './pages/UpdatePasswordPage';
+import { supabase } from './lib/supabase';
+import { SemesterProvider } from './contexts/SemesterContext';
+import Layout from './components/Layout';
 
-type Page = 'dashboard' | 'upload' | 'classes' | 'class-notes' | 'lecture' | 'slide-viewer' | 'tutor';
+type Page = 'dashboard' | 'upload' | 'classes' | 'class-notes' | 'lecture' | 'slide-viewer' | 'tutor' | 'update-password';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -24,8 +27,23 @@ export default function App() {
       setPageId(customEvent.detail.id);
     };
 
+    // Check for recovery mode in URL hash (fallback)
+    if (window.location.hash && window.location.hash.includes('type=recovery')) {
+      setCurrentPage('update-password');
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      console.log('Auth Event:', event); // Debug log
+      if (event === 'PASSWORD_RECOVERY') {
+        setCurrentPage('update-password');
+      }
+    });
+
     window.addEventListener('navigate', handleNavigate);
-    return () => window.removeEventListener('navigate', handleNavigate);
+    return () => {
+      window.removeEventListener('navigate', handleNavigate);
+      subscription.unsubscribe();
+    };
   }, []);
 
   if (loading) {
@@ -57,6 +75,8 @@ export default function App() {
         return <SlideViewerPage />;
       case 'tutor':
         return <TutorPage />;
+      case 'update-password':
+        return <UpdatePasswordPage />;
       case 'dashboard':
       default:
         return <Dashboard />;
@@ -65,8 +85,11 @@ export default function App() {
 
   return (
     <>
-      {renderPage()}
-      <DebugPanel />
+      <SemesterProvider>
+        <Layout currentPage={currentPage}>
+          {renderPage()}
+        </Layout>
+      </SemesterProvider>
     </>
   );
 }
