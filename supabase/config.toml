@@ -7,7 +7,3 @@ import_map = "./functions/deno.json"
 [functions.ai-tutor]
 verify_jwt = true
 import_map = "./functions/deno.json"
-
-[functions.process-slides]
-verify_jwt = true
-import_map = "./functions/deno.json"
