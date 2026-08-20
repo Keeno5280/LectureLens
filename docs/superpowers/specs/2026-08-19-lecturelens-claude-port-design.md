@@ -79,8 +79,13 @@ ALTER TABLE lectures
 ALTER TABLE lectures DROP CONSTRAINT IF EXISTS lectures_processing_status_check;
 ALTER TABLE lectures ADD CONSTRAINT lectures_processing_status_check
   CHECK (processing_status IN
-    ('pending','transcribing','transcribed','analyzing','completed','failed'));
+    ('pending','processing','transcribing','transcribed','analyzing','completed','failed'));
 ```
+
+**Correction (2026-08-19, caught in Task 2 review):** an earlier draft of this list omitted
+'processing', which the live constraint already accepts and which 8 UI sites still read
+(Dashboard, SearchBar, ClassNotesPage, UploadPage, DebugPanel). Removing an accepted value is
+a destructive change wearing an additive costume. The list above is the corrected seven.
 
 ### Already present on the live table (do not re-add)
 

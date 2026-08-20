@@ -184,7 +184,7 @@ ALTER TABLE lectures
 ALTER TABLE lectures DROP CONSTRAINT IF EXISTS lectures_processing_status_check;
 ALTER TABLE lectures ADD CONSTRAINT lectures_processing_status_check
   CHECK (processing_status IN
-    ('pending','transcribing','transcribed','analyzing','completed','failed'));
+    ('pending','processing','transcribing','transcribed','analyzing','completed','failed'));
 
 CREATE INDEX IF NOT EXISTS idx_lectures_status_updated
   ON lectures (processing_status, updated_at)
