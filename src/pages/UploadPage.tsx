@@ -342,13 +342,10 @@ export default function UploadPage() {
           return;
         }
       } else if (type === 'slides') {
-        const isValidSlide = file.type === 'application/pdf' ||
-                           file.type === 'application/vnd.ms-powerpoint' ||
-                           file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
-                           file.type.startsWith('image/');
+        const isValidSlide = file.type === 'application/pdf';
         if (!isValidSlide) {
           setToast({
-            message: 'Please drop a PDF, PowerPoint, or image file',
+            message: 'Please drop a PDF file',
             type: 'error',
           });
           return;
@@ -757,7 +754,7 @@ export default function UploadPage() {
               <label className="cursor-pointer inline-block">
                 <input
                   type="file"
-                  accept=".ppt,.pptx,.pdf,image/*"
+                  accept=".pdf,application/pdf"
                   onChange={handleFileSelect}
                   className="hidden"
                   disabled={!title || !classId}

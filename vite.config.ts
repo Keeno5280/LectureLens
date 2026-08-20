@@ -5,7 +5,12 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
-    exclude: ['lucide-react'],
+    // @huggingface/transformers is always loaded via dynamic import at runtime
+    // (src/lib/transcribe/browser.ts) and has its own manualChunk below — it
+    // must never be eagerly pre-bundled. Its dependency tree pulls in native
+    // modules (onnxruntime-node, sharp) that deadlock esbuild's dev-mode
+    // dependency scanner if it tries to crawl them.
+    exclude: ['lucide-react', '@huggingface/transformers'],
   },
   build: {
     rollupOptions: {
