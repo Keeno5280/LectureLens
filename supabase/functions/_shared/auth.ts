@@ -30,14 +30,24 @@ export async function authorizeLectureAccess(
 ): Promise<AuthResult> {
   if (!authHeader) return { ok: false, status: 401, error: 'missing authorization header' }
 
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+  // Trim the whole header first so leading/trailing whitespace (e.g. a stray
+  // space before "Bearer") doesn't defeat the anchored prefix match below.
+  const token = authHeader.trim().replace(/^Bearer\s+/i, '').trim()
   if (!token) return { ok: false, status: 401, error: 'malformed authorization header' }
 
   const user = await deps.getUserFromToken(token)
   if (!user) return { ok: false, status: 401, error: 'invalid or expired token' }
 
+  // Defense in depth: `undefined !== undefined` (and `'' !== ''`) is FALSE, so a
+  // defective AuthDeps implementation that resolves a falsy/empty id on either
+  // side would otherwise fall through the comparison below and be granted
+  // access. Both ids must be real, non-empty strings before we trust them.
+  if (!user.id) return { ok: false, status: 401, error: 'caller identity missing' }
+
   const lecture = await deps.getLecture(lectureId)
   if (!lecture) return { ok: false, status: 404, error: 'lecture not found' }
+
+  if (!lecture.user_id) return { ok: false, status: 403, error: 'lecture has no owner' }
 
   if (lecture.user_id !== user.id) return { ok: false, status: 403, error: 'forbidden' }
 

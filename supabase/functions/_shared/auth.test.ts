@@ -45,4 +45,42 @@ describe('authorizeLectureAccess', () => {
     const r = await authorizeLectureAccess(deps(), 'good-token', 'lec-1')
     expect(r.ok).toBe(true)
   })
+
+  it('accepts a token with leading whitespace before the Bearer prefix', async () => {
+    // Regression for the anchored ^Bearer regex missing a leading-space header.
+    const r = await authorizeLectureAccess(deps(), ' Bearer good-token', 'lec-1')
+    expect(r.ok).toBe(true)
+  })
+
+  it('401s on "Bearer" with nothing after it', async () => {
+    const r = await authorizeLectureAccess(deps(), 'Bearer', 'lec-1')
+    expect(r).toMatchObject({ ok: false, status: 401 })
+  })
+
+  it('401s on "Bearer" followed by only whitespace', async () => {
+    const r = await authorizeLectureAccess(deps(), 'Bearer   ', 'lec-1')
+    expect(r).toMatchObject({ ok: false, status: 401 })
+  })
+
+  it('401s when the resolved user has a falsy id, even if it would otherwise equal the lecture owner', async () => {
+    // Reproduces the exact bypass from the finding: undefined !== undefined (or
+    // '' !== '') is FALSE, so without the explicit guard this falls through the
+    // ownership comparison and is wrongly granted access instead of rejected.
+    const ownerlessLecture = { ...LECTURE, user_id: '' }
+    const r = await authorizeLectureAccess(
+      deps({
+        getUserFromToken: async (t) => (t === 'ghost-token' ? { id: '' } : null),
+        getLecture: async (id) => (id === 'lec-1' ? (ownerlessLecture as never) : null),
+      }),
+      'Bearer ghost-token', 'lec-1')
+    expect(r).toMatchObject({ ok: false, status: 401 })
+  })
+
+  it('403s when the lecture row has a falsy owner, even for a legitimately identified caller', async () => {
+    const ownerlessLecture = { ...LECTURE, user_id: '' }
+    const r = await authorizeLectureAccess(
+      deps({ getLecture: async (id) => (id === 'lec-1' ? (ownerlessLecture as never) : null) }),
+      'Bearer good-token', 'lec-1')
+    expect(r).toMatchObject({ ok: false, status: 403 })
+  })
 })
