@@ -1,6 +1,6 @@
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
-import { LectureAnalysisSchema, type LectureAnalysis } from './schemas'
-import { LECTURE_ANALYST_SYSTEM } from './prompts'
+import { LectureAnalysisSchema, type LectureAnalysis } from './schemas.ts'
+import { LECTURE_ANALYST_SYSTEM } from './prompts.ts'
 
 export const MODEL = 'claude-opus-5'
 export const MAX_TOKENS = 16000
