@@ -4,6 +4,7 @@ import { Upload, Mic, ArrowLeft, Check, Presentation, Eye, Loader2, RefreshCw } 
 import { useNavigate } from '../hooks/useNavigate';
 import { useAuth } from '../contexts/AuthContext';
 import Toast from '../components/Toast';
+import { getTranscriber, isTranscribable } from '../lib/transcribe';
 
 type ToastState = {
   message: string;
@@ -151,6 +152,8 @@ export default function UploadPage() {
     setUploadStatus('uploading');
     setUploadProgress(10);
 
+    let lectureId: string | undefined;
+
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
@@ -195,50 +198,46 @@ export default function UploadPage() {
         .single();
 
       if (insertError) throw insertError;
+      lectureId = lecture.id;
 
-      setUploadProgress(85);
+      // Transcribe in the browser for audio/video. Slides go straight to Claude.
+      if (isTranscribable(file)) {
+        await supabase.from('lectures')
+          .update({ processing_status: 'transcribing' }).eq('id', lecture.id);
 
-      const webhookUrl = 'https://n8n-e2ph.onrender.com/webhook/5f34c729-47b8-4f87-9323-f7462f7cfd7c';
-      
-      console.log('🚀 Triggering n8n webhook for:', fileName);
-      console.log('📦 Payload:', { id: lecture.id, title, file_type: fileType });
+        const transcriber = await getTranscriber();
+        const transcript = await transcriber.transcribe(file, (pct) =>
+          setUploadProgress(60 + pct * 0.25));          // transcription = 60%..85%
 
-      try {
-        const response = await fetch(webhookUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(lecture),
-          keepalive: true,
-        });
-
-        if (response.ok) {
-           console.log('✅ Webhook triggered successfully:', await response.text());
-        } else {
-           console.error('❌ Webhook failed:', response.status, await response.text());
-        }
-      } catch (err) {
-        console.error('❌ Webhook notification failed:', err);
+        const { error: tErr } = await supabase.from('lectures').update({
+          transcript,
+          transcript_source: transcriber.name,
+          processing_status: 'transcribed',
+        }).eq('id', lecture.id);
+        if (tErr) throw new Error(`Could not save transcript: ${tErr.message}`);
       }
+
+      setUploadProgress(90);
+
+      const { error: fnError } = await supabase.functions.invoke('analyze-lecture', {
+        body: { lectureId: lecture.id },
+      });
+      if (fnError) throw new Error(`AI analysis failed to start: ${fnError.message}`);
 
       setUploadProgress(100);
       setUploadedLectureId(lecture.id);
       setUploadStatus('success');
 
-      setToast({
-        message: '✅ Lecture uploaded successfully! AI processing will begin shortly.',
-        type: 'success',
-      });
-
       await fetchUploadedLecture();
-    } catch (error) {
-      console.error('Upload error:', error);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      if (lectureId) {
+        await supabase.from('lectures').update({
+          processing_status: 'failed', processing_error: message.slice(0, 500),
+        }).eq('id', lectureId);
+      }
       setUploadStatus('error');
-      setToast({
-        message: 'Error uploading lecture. Please try again.',
-        type: 'error',
-      });
+      setToast({ message: `❌ ${message}`, type: 'error' });
     }
   };
 
