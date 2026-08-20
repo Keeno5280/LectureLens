@@ -62,9 +62,7 @@ export default function ScheduleUpload({ isOpen, onClose }: Props) {
                     semester_id: selectedSemester.id,
                     file_url: publicUrl,
                     processing_status: 'pending'
-                })
-                .select()
-                .single();
+                });
 
             if (dbError) throw dbError;
 
@@ -87,6 +85,7 @@ export default function ScheduleUpload({ isOpen, onClose }: Props) {
     const handleClose = () => {
         setFile(null);
         setError(null);
+        setToast(null);
         onClose();
     };
 

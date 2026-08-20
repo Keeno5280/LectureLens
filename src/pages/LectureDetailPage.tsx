@@ -197,7 +197,15 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
     });
     if (invokeError) {
       setToast({ message: `❌ Retry failed: ${invokeError.message}`, type: 'error' });
+      return;
     }
+
+    // Don't wait on realtime/polling to notice the retry started. If the realtime
+    // channel happens to be disconnected right now, the polling effect's guard reads
+    // the STALE local processing_status ('failed') and never resumes — the failed
+    // card would sit there forever even though the retry succeeded. Refresh
+    // immediately from the same loadLecture() the manual Refresh button already uses.
+    await loadLecture();
   };
 
   const handleDeleteLecture = async () => {
