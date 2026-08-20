@@ -2,13 +2,10 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import Anthropic from 'npm:@anthropic-ai/sdk@^0.120.0';
 import { buildTutorContext, normalizeTurns, type ContextLecture, type Turn } from '../_shared/context.ts';
 import { TUTOR_SYSTEM } from '../_shared/prompts.ts';
+import { buildCorsHeaders } from '../_shared/cors.ts';
 
 const APP_ORIGIN = Deno.env.get('APP_ORIGIN') ?? 'http://localhost:5173';
-const corsHeaders = {
-  'Access-Control-Allow-Origin': APP_ORIGIN,
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+const corsHeaders = buildCorsHeaders(APP_ORIGIN);
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,

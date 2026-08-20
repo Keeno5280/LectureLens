@@ -2,13 +2,10 @@ import { createClient } from 'npm:@supabase/supabase-js@2'
 import Anthropic from 'npm:@anthropic-ai/sdk@^0.120.0'
 import { authorizeLectureAccess, type AuthResult } from '../_shared/auth.ts'
 import { buildAnalysisInput, analyzeLecture } from '../_shared/claude.ts'
+import { buildCorsHeaders } from '../_shared/cors.ts'
 
 const APP_ORIGIN = Deno.env.get('APP_ORIGIN') ?? 'http://localhost:5173'
-const cors = {
-  'Access-Control-Allow-Origin': APP_ORIGIN,
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-}
+const cors = buildCorsHeaders(APP_ORIGIN)
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } })
 
