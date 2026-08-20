@@ -21,3 +21,15 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# n8n exports — contain credential IDs and internal URLs for the whole instance
+*n8n*.json
+workflows.json
+lecture_lens_upload.json
+fixed_n8n_workflow*.json
+extract_workflow.cjs
+list_workflows.cjs
+vite.config.ts.timestamp-*.mjs
+
+# supabase CLI scratch
+supabase/.temp/
