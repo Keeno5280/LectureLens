@@ -226,10 +226,8 @@ The worked example this was designed from lives in `~/hcli-school/weeks/week-01/
 - Design spec: `docs/superpowers/specs/2026-08-19-lecturelens-claude-port-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-08-19-lecturelens-phase1-claude-backend.md`
 - Recovered Gemini prompts (only surviving copy): `docs/superpowers/specs/recovered/n8n-prompts.md`
-- Secrets: `ANTHROPIC_API_KEY` was **rotated on 2026-08-21** and the Supabase Edge Function
-  secret now holds the new key (verified: `secrets list` shows it updated while every other
-  secret's timestamp is unchanged). **Still outstanding — revoke the old keys in the Console.**
-  Two are known burned: the original Phase 1 key, and a second one (ending `AwAA`) pasted into
-  a chat transcript on 2026-08-21. The live key ends `1wAA`. Setting a new secret does not
-  disable the old keys — that is a Console action. Check nothing else uses them first; this
-  account has six Supabase projects.
+- Secrets: `ANTHROPIC_API_KEY` was **rotated on 2026-08-21 and the rotation is complete**. The
+  Supabase Edge Function secret holds the new key (live key ends `1wAA`; verified against
+  `GET /v1/models` → 200 after revocation). The two previously-leaked keys — the original Phase 1
+  key and one pasted into a chat transcript on 2026-08-21 — have been revoked in the Console.
+  No outstanding key hygiene. Never paste a key into a chat: that is what burned the second one.
