@@ -120,6 +120,12 @@ describe('buildDiagnosisInput', () => {
     expect(text).toContain('They cannot produce a new heart')
   })
 
+  it('emits the claim quote without wrapping it in quotation marks, so a model that echoes the field back verbatim still matches the bare DB value', () => {
+    const text = (buildDiagnosisInput(REQ)[0] as { text: string }).text
+    expect(text).toContain('Verbatim: They cannot produce a new heart')
+    expect(text).not.toContain('"They cannot produce a new heart"')
+  })
+
   it('includes distinctions — a wrong answer is usually a collapsed one', () => {
     const text = (buildDiagnosisInput(REQ)[0] as { text: string }).text
     expect(text).toContain('transformation')

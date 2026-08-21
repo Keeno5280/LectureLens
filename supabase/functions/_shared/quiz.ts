@@ -91,7 +91,7 @@ export function buildDiagnosisInput(req: DiagnosisRequest): ContentBlock[] {
   if (l.claims.length) {
     for (const c of l.claims) {
       parts.push(`- ${c.statement}`)
-      parts.push(`  Verbatim: "${c.quote}"`)
+      parts.push(`  Verbatim: ${c.quote}`)
       parts.push(`  Emphasis: ${c.emphasis}${c.contested ? ' — CONTESTED across traditions' : ''}`)
     }
   } else {
