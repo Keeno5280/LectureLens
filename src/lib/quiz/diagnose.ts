@@ -38,25 +38,38 @@ export async function diagnoseAll(
   const concurrency = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY)
   const result: FanOutResult = { succeeded: [], failed: [] }
 
+  // A caller-supplied onProgress must never affect this module's own
+  // bookkeeping. If it throws, that's the caller's bug (e.g. a React state
+  // setter firing after the component unmounted) — log it and move on rather
+  // than letting it reject the whole fan-out or double-book the item that
+  // triggered it.
+  const notify = (itemId: string, state: DiagnoseState): void => {
+    try {
+      opts.onProgress?.(itemId, state)
+    } catch (e) {
+      console.error('[diagnoseAll] onProgress threw', e)
+    }
+  }
+
   let next = 0
   const worker = async (): Promise<void> => {
     while (next < itemIds.length) {
       const itemId = itemIds[next++]
-      opts.onProgress?.(itemId, 'diagnosing')
+      notify(itemId, 'diagnosing')
       try {
         // supabase-js RESOLVES with { error }; it does not throw. Both paths
         // are handled — checking only one is the bug that shipped seven times.
         const { error } = await invoke(itemId)
         if (error) {
           result.failed.push({ itemId, error: error.message })
-          opts.onProgress?.(itemId, 'failed')
+          notify(itemId, 'failed')
         } else {
           result.succeeded.push(itemId)
-          opts.onProgress?.(itemId, 'completed')
+          notify(itemId, 'completed')
         }
       } catch (e) {
         result.failed.push({ itemId, error: e instanceof Error ? e.message : String(e) })
-        opts.onProgress?.(itemId, 'failed')
+        notify(itemId, 'failed')
       }
     }
   }

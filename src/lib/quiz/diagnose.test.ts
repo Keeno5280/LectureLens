@@ -77,4 +77,25 @@ describe('diagnoseAll', () => {
     expect(await diagnoseAll([], invoke)).toEqual({ succeeded: [], failed: [] })
     expect(invoke).not.toHaveBeenCalled()
   })
+
+  it('does not lose results or reject when onProgress throws on the diagnosing transition', async () => {
+    const invoke = vi.fn(ok)
+    const onProgress = (id: string, state: string) => {
+      if (id === 'b' && state === 'diagnosing') throw new Error('boom')
+    }
+    const r = await diagnoseAll(['a', 'b', 'c'], invoke, { onProgress })
+    expect(r.succeeded.sort()).toEqual(['a', 'b', 'c'])
+    expect(r.failed).toEqual([])
+  })
+
+  it('does not double-book an item when onProgress throws on the completed transition', async () => {
+    const invoke = vi.fn(ok)
+    const onProgress = (id: string, state: string) => {
+      if (id === 'a' && state === 'completed') throw new Error('boom')
+    }
+    const r = await diagnoseAll(['a', 'b', 'c'], invoke, { onProgress })
+    expect(r.succeeded).toContain('a')
+    expect(r.failed.find((f) => f.itemId === 'a')).toBeUndefined()
+    expect(r.succeeded.length + r.failed.length).toBe(3)
+  })
 })
