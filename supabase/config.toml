@@ -7,3 +7,11 @@ import_map = "./functions/deno.json"
 [functions.ai-tutor]
 verify_jwt = true
 import_map = "./functions/deno.json"
+
+[functions.parse-quiz]
+verify_jwt = true
+import_map = "./functions/deno.json"
+
+[functions.diagnose-miss]
+verify_jwt = true
+import_map = "./functions/deno.json"
