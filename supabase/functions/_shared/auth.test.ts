@@ -144,4 +144,39 @@ describe('authorizeQuizItemAccess', () => {
       expect(r.review.lecture_id).toBe('lec-1')
     }
   })
+
+  it('accepts a bare token without the Bearer prefix', async () => {
+    const r = await authorizeQuizItemAccess(qDeps(), 'good-token', 'item-1')
+    expect(r.ok).toBe(true)
+  })
+
+  it('accepts a token with leading whitespace before the Bearer prefix', async () => {
+    // Regression for the anchored ^Bearer regex missing a leading-space header.
+    const r = await authorizeQuizItemAccess(qDeps(), ' Bearer good-token', 'item-1')
+    expect(r.ok).toBe(true)
+  })
+
+  it('401s on "Bearer" with nothing after it', async () => {
+    const r = await authorizeQuizItemAccess(qDeps(), 'Bearer', 'item-1')
+    expect(r).toMatchObject({ ok: false, status: 401 })
+  })
+
+  it('401s on "Bearer" followed by only whitespace', async () => {
+    const r = await authorizeQuizItemAccess(qDeps(), 'Bearer   ', 'item-1')
+    expect(r).toMatchObject({ ok: false, status: 401 })
+  })
+
+  it('401s when the resolved user has a falsy id, even if it would otherwise equal the review owner', async () => {
+    // Reproduces the exact bypass this repo's IDORs shared: '' !== '' is FALSE,
+    // so without the explicit !user.id guard this would fall through the
+    // ownership comparison and be wrongly granted access instead of rejected.
+    const ownerlessReview = { ...REVIEW, user_id: '' }
+    const r = await authorizeQuizItemAccess(
+      qDeps({
+        getUserFromToken: async (t) => (t === 'ghost-token' ? { id: '' } : null),
+        getReview: async (id) => (id === 'rev-1' ? ownerlessReview : null),
+      }),
+      'Bearer ghost-token', 'item-1')
+    expect(r).toMatchObject({ ok: false, status: 401 })
+  })
 })
