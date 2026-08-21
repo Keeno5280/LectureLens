@@ -55,49 +55,63 @@ export default function QuizReviewPage({ lectureId }: Props) {
 
   const handleParse = async (src: QuizSource) => {
     setBusy(true); setError(null);
-    // functions.invoke RESOLVES with { error }; it does not throw.
-    const { data, error: err } = await supabase.functions.invoke('parse-quiz', {
-      body: { lectureId, ...src },
-    });
-    setBusy(false);
-    if (err) { setError(await readInvokeErrorMessage(err)); return; }
+    try {
+      // functions.invoke RESOLVES with { error } rather than throwing, in the
+      // documented case — but the whole flow is wrapped in try/catch anyway,
+      // so an unexpected throw can't strand `busy` at true with the paste
+      // form's submit button dead and no explanation on screen.
+      const { data, error: err } = await supabase.functions.invoke('parse-quiz', {
+        body: { lectureId, ...src },
+      });
+      if (err) { setError(await readInvokeErrorMessage(err)); return; }
 
-    // parse-quiz persists NOTHING and returns a genuine 200 with reviewId:
-    // null when it found no readable questions at all. Discarding the
-    // `unreadable` explanations here would throw away the entire value of
-    // that path, and advancing past it would be a lie — there is no review
-    // to confirm. Stay on the input stage and show exactly what could not be
-    // read.
-    if (!data?.reviewId) {
-      const unreadableList = (data?.unreadable ?? []) as string[];
-      setError(
-        unreadableList.length > 0
-          ? `I couldn't find any questions in that. Here's what I couldn't make out: ${unreadableList.join('; ')}`
-          : "I couldn't find any questions in that.",
-      );
-      return;
+      // parse-quiz persists NOTHING and returns a genuine 200 with reviewId:
+      // null when it found no readable questions at all. Discarding the
+      // `unreadable` explanations here would throw away the entire value of
+      // that path, and advancing past it would be a lie — there is no review
+      // to confirm. Stay on the input stage and show exactly what could not be
+      // read.
+      if (!data?.reviewId) {
+        const unreadableList = (data?.unreadable ?? []) as string[];
+        setError(
+          unreadableList.length > 0
+            ? `I couldn't find any questions in that. Here's what I couldn't make out: ${unreadableList.join('; ')}`
+            : "I couldn't find any questions in that.",
+        );
+        return;
+      }
+
+      setReviewId(data.reviewId);
+      setUnreadable(data.unreadable ?? []);
+      setReportedScore({ correct: data.scoreCorrect ?? null, total: data.scoreTotal ?? null });
+
+      const loaded = await loadItems(data.reviewId);
+      if (loaded === null) return; // loadItems already recorded the honest error.
+
+      // Every item parsed as correct: there is nothing to diagnose. Close the
+      // review out now rather than leaving it stuck in 'awaiting_confirmation'
+      // forever — ParsedQuizTable's Diagnose button is disabled at missCount 0,
+      // so nothing else would ever move it forward. The student still lands on
+      // the confirm table below (not a dead end): a wrongly-marked-correct row
+      // is exactly the case where they'd want to flip it and diagnose it.
+      if (loaded.length > 0 && loaded.every((i) => i.is_correct)) {
+        const { error: revErr } = await supabase.from('quiz_reviews')
+          .update({ status: 'completed' }).eq('id', data.reviewId);
+        if (revErr) setError(`This quiz has nothing to diagnose, but we couldn't record that: ${revErr.message}`);
+      }
+
+      setStage('confirm');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      // Cleared only here — after every DB round trip above, not right after
+      // the invoke — so QuizPasteForm's submit button stays disabled for the
+      // whole operation. A second click mid-flight would re-invoke parse-quiz
+      // (a billed LLM parse), insert a duplicate quiz_reviews row, and race
+      // this call's own state setters. The early-return paths (invoke error,
+      // zero-item) hit this too, so the form is never left dead.
+      setBusy(false);
     }
-
-    setReviewId(data.reviewId);
-    setUnreadable(data.unreadable ?? []);
-    setReportedScore({ correct: data.scoreCorrect ?? null, total: data.scoreTotal ?? null });
-
-    const loaded = await loadItems(data.reviewId);
-    if (loaded === null) return; // loadItems already recorded the honest error.
-
-    // Every item parsed as correct: there is nothing to diagnose. Close the
-    // review out now rather than leaving it stuck in 'awaiting_confirmation'
-    // forever — ParsedQuizTable's Diagnose button is disabled at missCount 0,
-    // so nothing else would ever move it forward. The student still lands on
-    // the confirm table below (not a dead end): a wrongly-marked-correct row
-    // is exactly the case where they'd want to flip it and diagnose it.
-    if (loaded.length > 0 && loaded.every((i) => i.is_correct)) {
-      const { error: revErr } = await supabase.from('quiz_reviews')
-        .update({ status: 'completed' }).eq('id', data.reviewId);
-      if (revErr) setError(`This quiz has nothing to diagnose, but we couldn't record that: ${revErr.message}`);
-    }
-
-    setStage('confirm');
   };
 
   const patchItem = (id: string, patch: Partial<QuizReviewItem>) =>
@@ -131,17 +145,45 @@ export default function QuizReviewPage({ lectureId }: Props) {
       { onProgress: (itemId, state) => patchItem(itemId, { diagnosis_status: state }) },
     );
 
-    await loadItems(reviewId);
+    const reloaded = await loadItems(reviewId);
     setBusy(false);
-    // Never a bare success when something failed.
+    // Never a bare success when something failed. And if the post-run reload
+    // itself failed, say so too, composed into the same message rather than
+    // clobbered by it: onProgress only ever patched `diagnosis_status`
+    // locally, never the full `diagnosis` payload, so a failed reload here
+    // means the cards below may not reflect what actually happened.
     if (result.failed.length) {
-      setError(`${result.succeeded.length} of ${ids.length} diagnosed · ${result.failed.length} failed. Retry them below.`);
+      const summary = `${result.succeeded.length} of ${ids.length} diagnosed · ${result.failed.length} failed. Retry them below.`;
+      setError(reloaded === null
+        ? `${summary} The results below could also not be refreshed — what's shown may be out of date.`
+        : summary);
     }
   };
 
   const misses = items.filter((i) => !i.is_correct);
 
-  useEffect(() => { if (reviewId && stage === 'results') void loadItems(reviewId); }, [reviewId, stage, loadItems]);
+  // No auto-reload effect on 'results': a `select` fired the instant `stage`
+  // becomes 'results' races diagnose-miss's edge-function round trip and
+  // reliably reads back 'pending'/'diagnosing' rows *before* the DB reflects
+  // what onProgress just patched into local state optimistically —
+  // overwriting that optimistic state with rows DiagnosisCard has no branch
+  // for (`if (!d) return null`), blanking the whole page for the run.
+  // runDiagnosis's own `await loadItems(reviewId)` after the fan-out
+  // completes is the only reload worth doing.
+
+  // Addition 2 (every item parsed correct) only fires once, at parse time.
+  // A student who starts with a miss, flips it to "Got it right" on the
+  // confirm table, and leaves would otherwise strand the review at
+  // 'awaiting_confirmation' forever — the exact dead end Addition 2 exists
+  // to close, reached by a different route. Mirror that write whenever the
+  // confirm-stage miss count reaches zero, however it got there.
+  useEffect(() => {
+    if (stage !== 'confirm' || !reviewId || items.length === 0 || misses.length > 0) return;
+    void supabase.from('quiz_reviews').update({ status: 'completed' }).eq('id', reviewId)
+      .then(({ error: revErr }) => {
+        if (revErr) setError(`This quiz has nothing to diagnose, but we couldn't record that: ${revErr.message}`);
+      });
+  }, [stage, reviewId, items.length, misses.length]);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
