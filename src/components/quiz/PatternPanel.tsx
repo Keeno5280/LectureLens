@@ -4,6 +4,14 @@ import type { TagCount } from '../../lib/quiz/patterns';
 
 interface Props {
   counts: TagCount[];
+  /**
+   * The number of diagnosed items (misses) `counts` was built from — NOT
+   * the sum of every `TagCount.count`. One miss can carry more than one
+   * confusion tag, so that sum overcounts; this is the true denominator for
+   * every "X of Y" below, and the same number `describePattern` uses to
+   * decide the verdict. See `TagSummary` in `lib/quiz/patterns.ts`.
+   */
+  diagnosedItemCount: number;
   quizCount: number;
   classScoped: boolean;
   /**
@@ -23,13 +31,12 @@ interface Props {
  * whatever verdict it returns, honestly, including the refusal below 3
  * diagnosed quizzes. Do not soften that refusal here.
  */
-export default function PatternPanel({ counts, quizCount, classScoped, className }: Props) {
+export default function PatternPanel({ counts, diagnosedItemCount, quizCount, classScoped, className }: Props) {
   // Nothing diagnosed yet — nothing to show. A panel that renders an empty
   // shell above the diagnosis cards reads as broken, not as "not yet".
   if (counts.length === 0) return null;
 
-  const { dominant, isPattern, note } = describePattern(counts, quizCount);
-  const totalTagged = counts.reduce((sum, c) => sum + c.count, 0);
+  const { dominant, isPattern, note } = describePattern({ counts, diagnosedItemCount }, quizCount);
 
   return (
     <div className="bg-white rounded-2xl shadow-md p-8 space-y-4">
@@ -47,7 +54,7 @@ export default function PatternPanel({ counts, quizCount, classScoped, className
           <li key={c.tag} className="flex items-center justify-between text-sm">
             <span className="text-gray-700">{c.tag}</span>
             <span className="text-gray-500">
-              {c.count} of {totalTagged}
+              {c.count} of {diagnosedItemCount}
             </span>
           </li>
         ))}
@@ -55,7 +62,7 @@ export default function PatternPanel({ counts, quizCount, classScoped, className
 
       {dominant && (
         <p className="text-sm text-gray-700">
-          Most common: <strong>{dominant.tag}</strong> ({dominant.count} of {totalTagged}).
+          Most common: <strong>{dominant.tag}</strong> ({dominant.count} of {diagnosedItemCount}).
         </p>
       )}
 

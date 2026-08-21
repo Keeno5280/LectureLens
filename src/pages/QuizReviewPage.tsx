@@ -433,7 +433,15 @@ export default function QuizReviewPage({ lectureId }: Props) {
   // loaded separately by loadClassPattern — see ClassPatternMeta for why
   // they're kept apart until now. `classPattern === null` means the panel
   // is hidden, so these are unused in that case.
-  const patternCounts = classPattern ? summarizeTags([...items, ...classPattern.siblingItems]) : [];
+  //
+  // summarizeTags returns { counts, diagnosedItemCount } from one pass, not
+  // a bare array — diagnosedItemCount is the true miss count PatternPanel
+  // labels its "X of Y" against, which is NOT the same as summing
+  // TagCount.count (a miss can carry more than one tag). Both numbers come
+  // from this single call so they can't drift apart.
+  const patternSummary = classPattern
+    ? summarizeTags([...items, ...classPattern.siblingItems])
+    : { counts: [], diagnosedItemCount: 0 };
   const patternQuizCount = classPattern
     ? (items.some((i) => i.diagnosis_status === 'completed') ? 1 : 0) +
       new Set(
@@ -553,7 +561,8 @@ export default function QuizReviewPage({ lectureId }: Props) {
         <>
           {classPattern && (
             <PatternPanel
-              counts={patternCounts}
+              counts={patternSummary.counts}
+              diagnosedItemCount={patternSummary.diagnosedItemCount}
               quizCount={patternQuizCount}
               classScoped={classPattern.classScoped}
               className={classPattern.className}

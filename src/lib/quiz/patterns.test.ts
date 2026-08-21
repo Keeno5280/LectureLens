@@ -32,11 +32,12 @@ describe('summarizeTags', () => {
 
     const out = summarizeTags(items)
 
-    expect(out).toEqual([
+    expect(out.counts).toEqual([
       { tag: 'collapsed-distinction', count: 2, positions: [1, 2] },
       { tag: 'careless', count: 1, positions: [3] },
       { tag: 'recall-gap', count: 1, positions: [4] },
     ])
+    expect(out.diagnosedItemCount).toBe(4)
   })
 
   it('breaks a tie in count by tag name, ascending', () => {
@@ -47,7 +48,7 @@ describe('summarizeTags', () => {
 
     const out = summarizeTags(items)
 
-    expect(out.map((c) => c.tag)).toEqual(['careless', 'wrong-category'])
+    expect(out.counts.map((c) => c.tag)).toEqual(['careless', 'wrong-category'])
   })
 
   it('ignores items that were never diagnosed, even if confusion_tags is populated', () => {
@@ -61,7 +62,9 @@ describe('summarizeTags', () => {
       item({ id: 'd', diagnosis_status: 'not-applicable', confusion_tags: ['collapsed-distinction'] }),
     ]
 
-    expect(summarizeTags(items)).toEqual([])
+    const out = summarizeTags(items)
+    expect(out.counts).toEqual([])
+    expect(out.diagnosedItemCount).toBe(0)
   })
 
   it('never counts a tag twice for one item, even if the item repeats it', () => {
@@ -76,10 +79,11 @@ describe('summarizeTags', () => {
 
     const out = summarizeTags(items)
 
-    expect(out).toEqual([{ tag: 'collapsed-distinction', count: 1, positions: [1] }])
+    expect(out.counts).toEqual([{ tag: 'collapsed-distinction', count: 1, positions: [1] }])
+    expect(out.diagnosedItemCount).toBe(1)
   })
 
-  it('lets one item contribute to more than one distinct tag bucket', () => {
+  it('lets one item contribute to more than one distinct tag bucket, but only counts once toward diagnosedItemCount', () => {
     const items = [
       item({
         id: 'a',
@@ -91,14 +95,20 @@ describe('summarizeTags', () => {
 
     const out = summarizeTags(items)
 
-    expect(out).toEqual([
+    expect(out.counts).toEqual([
       { tag: 'careless', count: 1, positions: [1] },
       { tag: 'collapsed-distinction', count: 1, positions: [1] },
     ])
+    // REGRESSION GUARD: one item, two tags. diagnosedItemCount must stay 1 —
+    // it is the miss count, not the sum of TagCount.count (which is 2 here).
+    // This is the exact number describePattern's majority check depends on.
+    expect(out.diagnosedItemCount).toBe(1)
   })
 
-  it('returns an empty array for no items', () => {
-    expect(summarizeTags([])).toEqual([])
+  it('returns an empty summary for no items', () => {
+    const out = summarizeTags([])
+    expect(out.counts).toEqual([])
+    expect(out.diagnosedItemCount).toBe(0)
   })
 })
 
@@ -106,19 +116,25 @@ describe('describePattern', () => {
   it('is never a pattern below MIN_QUIZZES_FOR_PATTERN, however unanimous the tag is', () => {
     expect(MIN_QUIZZES_FOR_PATTERN).toBe(3)
 
-    // Every single diagnosed item across 2 quizzes carries the same tag —
-    // as unanimous as it gets — and it must still refuse.
-    const counts = [{ tag: 'collapsed-distinction' as const, count: 4, positions: [1, 2, 1, 2] }]
+    // 4 diagnosed items, all carrying the same tag — as unanimous as it
+    // gets — across 2 quizzes. Must still refuse.
+    const summary = {
+      counts: [{ tag: 'collapsed-distinction' as const, count: 4, positions: [1, 2, 1, 2] }],
+      diagnosedItemCount: 4,
+    }
 
     for (const quizCount of [0, 1, 2]) {
-      const out = describePattern(counts, quizCount)
+      const out = describePattern(summary, quizCount)
       expect(out.isPattern).toBe(false)
     }
   })
 
   it("uses review.md's own refusal wording at n=1", () => {
-    const counts = [{ tag: 'collapsed-distinction' as const, count: 4, positions: [1, 2, 3, 4] }]
-    const out = describePattern(counts, 1)
+    const summary = {
+      counts: [{ tag: 'collapsed-distinction' as const, count: 4, positions: [1, 2, 3, 4] }],
+      diagnosedItemCount: 4,
+    }
+    const out = describePattern(summary, 1)
     expect(out.isPattern).toBe(false)
     expect(out.note).toContain('Too early to call a pattern')
     expect(out.note.toLowerCase()).not.toContain('possible pattern')
@@ -129,7 +145,7 @@ describe('describePattern', () => {
       { tag: 'collapsed-distinction' as const, count: 3, positions: [1, 1, 1] },
       { tag: 'careless' as const, count: 1, positions: [2] },
     ]
-    const out = describePattern(counts, 3)
+    const out = describePattern({ counts, diagnosedItemCount: 4 }, 3)
 
     expect(out.isPattern).toBe(true)
     expect(out.dominant).toEqual(counts[0])
@@ -142,14 +158,56 @@ describe('describePattern', () => {
       { tag: 'careless' as const, count: 2, positions: [1, 2] },
       { tag: 'collapsed-distinction' as const, count: 2, positions: [3, 4] },
     ]
-    const out = describePattern(counts, 3)
+    const out = describePattern({ counts, diagnosedItemCount: 4 }, 3)
 
     expect(out.isPattern).toBe(false)
   })
 
   it('reports no dominant tag and no pattern for empty input', () => {
-    const out = describePattern([], 0)
+    const out = describePattern({ counts: [], diagnosedItemCount: 0 }, 0)
     expect(out.dominant).toBeNull()
     expect(out.isPattern).toBe(false)
+  })
+
+  // REGRESSION (caught in review): real diagnoses here commonly carry more
+  // than one confusion_tag per miss. A tag that is unanimous across every
+  // diagnosed ITEM must count as a majority even though each item also
+  // carries other tags — the denominator has to be the number of diagnosed
+  // items, never the sum of tag instances across buckets (4 items x 3 tags
+  // = 12 tag instances, but there were only 4 misses). Before the fix, this
+  // test failed with `isPattern: false` — see task-patterns-report.md for
+  // the captured before/after output.
+  it('is a pattern when one tag is unanimous across every diagnosed item, even though each item carries three tags total', () => {
+    const items = [
+      item({ id: 'a', position: 1, diagnosis_status: 'completed', confusion_tags: ['collapsed-distinction', 'careless', 'recall-gap'] }),
+      item({ id: 'b', position: 2, diagnosis_status: 'completed', confusion_tags: ['collapsed-distinction', 'misread-question', 'wrong-category'] }),
+      item({ id: 'c', position: 3, diagnosis_status: 'completed', confusion_tags: ['collapsed-distinction', 'absolutizing-word', 'judgment-under-tension'] }),
+      item({ id: 'd', position: 4, diagnosis_status: 'completed', confusion_tags: ['collapsed-distinction', 'answered-tone-not-claim', 'careless'] }),
+    ]
+
+    const summary = summarizeTags(items)
+    const out = describePattern(summary, 3)
+
+    expect(summary.diagnosedItemCount).toBe(4)
+    expect(out.dominant?.tag).toBe('collapsed-distinction')
+    expect(out.dominant?.count).toBe(4)
+    expect(out.isPattern).toBe(true)
+  })
+
+  // Matches the real quiz that motivated this feature: 4 misses, one tag
+  // each, at n=1. Must show the true miss count (4 of 4, not 4 of anything
+  // else) and must still refuse to call it a pattern — only one quiz exists.
+  it('sanity check: 4 misses all tagged the same way at quizCount 1 -> honest 4-of-4 count, no pattern claimed', () => {
+    const items = [1, 2, 3, 4].map((position) =>
+      item({ id: `m${position}`, position, diagnosis_status: 'completed', confusion_tags: ['collapsed-distinction'] }),
+    )
+
+    const summary = summarizeTags(items)
+    const out = describePattern(summary, 1)
+
+    expect(summary.diagnosedItemCount).toBe(4)
+    expect(out.dominant).toEqual({ tag: 'collapsed-distinction', count: 4, positions: [1, 2, 3, 4] })
+    expect(out.isPattern).toBe(false)
+    expect(out.note).toBe('Too early to call a pattern. One quiz is a data point.')
   })
 })
