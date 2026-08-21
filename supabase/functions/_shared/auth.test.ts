@@ -93,11 +93,13 @@ const ITEM = {
   student_answer: 'True', correct_answer: 'False',
 }
 const REVIEW = { id: 'rev-1', user_id: 'user-A', lecture_id: 'lec-1' }
+const QUIZ_LECTURE = { id: 'lec-1', user_id: 'user-A' }
 
 const qDeps = (over: Partial<QuizAuthDeps> = {}): QuizAuthDeps => ({
   getUserFromToken: async (t) => (t === 'good-token' ? { id: 'user-A' } : null),
   getItem: async (id) => (id === 'item-1' ? ITEM : null),
   getReview: async (id) => (id === 'rev-1' ? REVIEW : null),
+  getLecture: async (id) => (id === 'lec-1' ? QUIZ_LECTURE : null),
   ...over,
 })
 
@@ -135,13 +137,40 @@ describe('authorizeQuizItemAccess', () => {
     expect(r).toMatchObject({ ok: false, status: 403 })
   })
 
-  it('succeeds for the owner and returns the item and review', async () => {
+  it("403s when the review points at somebody else's lecture — the repointed-review case", async () => {
+    // `quiz_reviews.lecture_id` is writable by the row's owner: RLS scopes the
+    // UPDATE by user_id, not by column. So the review can be theirs while the
+    // lecture it names is not. Stopping the walk at the review would leak the
+    // victim's transcript into the attacker's own diagnosis rows.
+    const r = await authorizeQuizItemAccess(
+      qDeps({ getLecture: async () => ({ id: 'lec-1', user_id: 'user-B' }) }),
+      'Bearer good-token', 'item-1')
+    expect(r).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('404s when the lecture is missing', async () => {
+    const r = await authorizeQuizItemAccess(
+      qDeps({ getLecture: async () => null }), 'Bearer good-token', 'item-1')
+    expect(r).toMatchObject({ ok: false, status: 404 })
+  })
+
+  it('403s when the lecture has no owner', async () => {
+    // `'' !== ''` is FALSE — without the explicit guard an ownerless lecture
+    // would fall straight through the comparison, exactly as the review case does.
+    const r = await authorizeQuizItemAccess(
+      qDeps({ getLecture: async () => ({ ...QUIZ_LECTURE, user_id: '' }) }),
+      'Bearer good-token', 'item-1')
+    expect(r).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('succeeds for the owner and returns the item, review and lecture', async () => {
     const r = await authorizeQuizItemAccess(qDeps(), 'Bearer good-token', 'item-1')
     expect(r.ok).toBe(true)
     if (r.ok) {
       expect(r.userId).toBe('user-A')
       expect(r.item.id).toBe('item-1')
       expect(r.review.lecture_id).toBe('lec-1')
+      expect(r.lecture).toEqual({ id: 'lec-1', user_id: 'user-A' })
     }
   })
 

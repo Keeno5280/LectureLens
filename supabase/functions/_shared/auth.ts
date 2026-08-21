@@ -71,25 +71,41 @@ export interface QuizReviewRow {
   lecture_id: string
 }
 
+/** Only what ownership needs. The diagnosis content is fetched separately. */
+export interface QuizLectureRow {
+  id: string
+  user_id: string
+}
+
 export interface QuizAuthDeps {
   /** Resolve a user from the caller's OWN JWT. MUST NOT use the service-role key. */
   getUserFromToken(token: string): Promise<{ id: string } | null>
   /** May use service-role — ownership is checked after. */
   getItem(id: string): Promise<QuizItemRow | null>
   getReview(id: string): Promise<QuizReviewRow | null>
+  /** May use service-role — ownership is checked after. */
+  getLecture(id: string): Promise<QuizLectureRow | null>
 }
 
 export type QuizAuthResult =
-  | { ok: true; userId: string; item: QuizItemRow; review: QuizReviewRow }
+  | { ok: true; userId: string; item: QuizItemRow; review: QuizReviewRow; lecture: QuizLectureRow }
   | { ok: false; status: 401 | 403 | 404; error: string }
 
 /**
- * Identity → ownership → privileged work, walking item → review → owner.
+ * Identity → ownership → privileged work, walking item → review → lecture → owner.
  *
  * `itemId` comes straight off the request body. Nothing has checked it belongs
  * to the caller, so this must resolve the parent review and compare its owner
  * against the caller's own JWT before any service-role work happens. Skipping
  * that walk is how both of this repo's IDORs happened.
+ *
+ * The walk does NOT stop at the review. `quiz_reviews.lecture_id` is writable
+ * by the row's owner — RLS scopes the UPDATE by `user_id`, not by column — so
+ * a caller can repoint their own review at somebody else's lecture and every
+ * check above this line still passes. Whatever loads that lecture afterwards
+ * would then read, quote and persist a stranger's material into a row the
+ * attacker can read back. The lecture's own owner is therefore checked here,
+ * not assumed from the review.
  */
 export async function authorizeQuizItemAccess(
   deps: QuizAuthDeps,
@@ -117,5 +133,14 @@ export async function authorizeQuizItemAccess(
   if (!review.user_id) return { ok: false, status: 403, error: 'quiz review has no owner' }
   if (review.user_id !== user.id) return { ok: false, status: 403, error: 'forbidden' }
 
-  return { ok: true, userId: user.id, item, review }
+  const lecture = await deps.getLecture(review.lecture_id)
+  if (!lecture) return { ok: false, status: 404, error: 'lecture not found' }
+
+  // Same empty-string rationale as the review guard above: `'' !== ''` is
+  // false, so an ownerless lecture must be rejected explicitly rather than
+  // being allowed to fall through the comparison.
+  if (!lecture.user_id) return { ok: false, status: 403, error: 'lecture has no owner' }
+  if (lecture.user_id !== user.id) return { ok: false, status: 403, error: 'forbidden' }
+
+  return { ok: true, userId: user.id, item, review, lecture }
 }

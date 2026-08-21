@@ -36,7 +36,12 @@ Deno.serve(async (req) => {
           const scoped = createClient(SUPABASE_URL, ANON_KEY, {
             global: { headers: { Authorization: `Bearer ${token}` } },
           })
-          const { data } = await scoped.auth.getUser()
+          const { data, error } = await scoped.auth.getUser()
+          // A transient error validating the token must not be indistinguishable
+          // from "no user" — that would surface as a misleading 401 'invalid or
+          // expired token' instead of an honest 500. Throwing here is caught by
+          // the surrounding try/catch, which replies with a CORS'd JSON 500.
+          if (error) throw new Error(`Could not verify the caller's identity: ${error.message}`)
           return data.user ? { id: data.user.id } : null
         },
         getItem: async (id) => {
@@ -53,6 +58,21 @@ Deno.serve(async (req) => {
           const { data, error } = await admin.from('quiz_reviews')
             .select('id, user_id, lecture_id').eq('id', id).maybeSingle()
           if (error) throw new Error(`Could not look up the quiz review: ${error.message}`)
+          return data ?? null
+        },
+        // Ownership only — deliberately just the two columns the check needs.
+        // The lecture's CONTENT is loaded further down, after authorization,
+        // and the two selects share no columns.
+        //
+        // The review owning the caller is NOT enough: `quiz_reviews.lecture_id`
+        // is writable by the row's owner (RLS scopes the UPDATE by user_id, not
+        // by column), so a review can legitimately be theirs while the lecture
+        // it names is somebody else's. Without this the function would quote a
+        // stranger's lecture into the caller's own row.
+        getLecture: async (id) => {
+          const { data, error } = await admin.from('lectures')
+            .select('id, user_id').eq('id', id).maybeSingle()
+          if (error) throw new Error(`Could not look up the lecture: ${error.message}`)
           return data ?? null
         },
       },
@@ -84,9 +104,12 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Keyed off the lecture the AUTHORIZER cleared, not off
+    // `auth.review.lecture_id` again: reading the id back off the review a
+    // second time is how a check and the work it guards drift apart.
     const { data: lecture, error: lecErr } = await admin.from('lectures')
       .select('title, transcript, claims, distinctions')
-      .eq('id', auth.review.lecture_id).maybeSingle()
+      .eq('id', auth.lecture.id).maybeSingle()
     if (lecErr) return await fail(`Could not load the lecture: ${lecErr.message}`)
     if (!lecture) {
       // The review as a whole cannot proceed — every remaining item would fail
@@ -149,10 +172,21 @@ Deno.serve(async (req) => {
       console.warn(`diagnose-miss: dropped ${rejected.length} unverifiable citation(s) for item ${itemId}`)
     }
 
+    // The count is PERSISTED, not just logged. A 'covered' diagnosis whose
+    // every quote was fabricated and rejected renders identically to one the
+    // model simply chose not to cite — and a server log is not a signal the
+    // student will ever see. This number is the only warning anyone gets that
+    // the model made quotes up, so it goes where the card can read it.
+    //
+    // It counts quotes that FAILED VERIFICATION and nothing else. Citations
+    // discarded just above because coverage is 'not-in-lecture' are not counted:
+    // those were dropped by policy, not because they could not be matched, and
+    // that case already has its own banner on the card saying so.
     const { error: saveErr } = await admin.from('quiz_review_items').update({
       diagnosis: { ...diagnosis, citations },
       confusion_tags: diagnosis.confusion_tags,
       lecture_coverage: diagnosis.lecture_coverage,
+      dropped_citations: rejected.length,
       diagnosis_status: 'completed',
       diagnosis_error: null,
     }).eq('id', itemId)
