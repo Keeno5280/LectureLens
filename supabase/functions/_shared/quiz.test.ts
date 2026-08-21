@@ -28,6 +28,15 @@ describe('buildParseInput', () => {
   it('throws when an image is supplied without a media type', () => {
     expect(() => buildParseInput({ imageBase64: 'iVBOR' })).toThrow(/media type/i)
   })
+
+  it('throws when BOTH text and an image are supplied rather than silently preferring text', () => {
+    // Quietly dropping the screenshot would parse a quiz the caller did not
+    // mean to send, and the confirm gate cannot catch it: the table it renders
+    // would be internally consistent, just about the wrong input.
+    expect(() => buildParseInput({
+      text: 'Q1. What is a worldview?', imageBase64: 'iVBOR', imageMediaType: 'image/png',
+    })).toThrow(/not both/i)
+  })
 })
 
 describe('parseQuiz', () => {

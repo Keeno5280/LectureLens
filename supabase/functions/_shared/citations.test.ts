@@ -54,6 +54,26 @@ describe('verifyCitations', () => {
     expect(r.rejected).toHaveLength(1)
   })
 
+  // The two tests below pin the `>=` in the length guard from both sides. An
+  // off-by-one there is invisible in normal use and either lets one-character-
+  // too-short fragments through or drops legitimate short citations.
+  it('accepts a quote of exactly MIN_VERIFIABLE_QUOTE_LENGTH characters', () => {
+    const atBoundary = 'could not do'
+    expect(atBoundary).toHaveLength(MIN_VERIFIABLE_QUOTE_LENGTH)
+    const r = verifyCitations([cite(atBoundary)], { transcript: TRANSCRIPT, claimQuotes: [] })
+    expect(r.verified).toHaveLength(1)
+    expect(r.rejected).toHaveLength(0)
+  })
+
+  it('rejects a quote one character short of the minimum, even though it IS in the transcript', () => {
+    const belowBoundary = 'weakened by'
+    expect(belowBoundary).toHaveLength(MIN_VERIFIABLE_QUOTE_LENGTH - 1)
+    expect(normalizeForMatch(TRANSCRIPT)).toContain(belowBoundary)
+    const r = verifyCitations([cite(belowBoundary)], { transcript: TRANSCRIPT, claimQuotes: [] })
+    expect(r.verified).toHaveLength(0)
+    expect(r.rejected).toHaveLength(1)
+  })
+
   it('separates the good from the bad rather than failing the whole set', () => {
     const r = verifyCitations(
       [cite('weakened by the flesh, could not do'), cite('a quote nobody ever said out loud')],

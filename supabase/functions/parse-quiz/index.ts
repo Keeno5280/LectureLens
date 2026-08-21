@@ -92,10 +92,23 @@ Deno.serve(async (req) => {
   // feature exists to prevent. The UI hides the entry point in this case; this
   // is the server-side half of that guarantee.
   const { data: statusRow, error: statusErr } = await admin
-    .from('lectures').select('processing_status').eq('id', lectureId).maybeSingle()
+    .from('lectures').select('processing_status, claims').eq('id', lectureId).maybeSingle()
   if (statusErr) return json(500, { error: `Could not read lecture status: ${statusErr.message}` })
   if (statusRow?.processing_status !== 'completed') {
     return json(409, { error: 'This lecture has not finished analysis yet, so there is nothing to diagnose against.' })
+  }
+
+  // 'completed' is not the same as "has something to cite". A slides lecture
+  // has no transcript, so `claims[].quote` is the ENTIRE verification corpus —
+  // and with no claims that corpus is empty, which means every citation the
+  // diagnostician produces gets rejected in code and silently disappears. The
+  // student would get confident, quote-free explanations from a lecture the app
+  // knows nothing about. Refuse at the gate instead, and say which it is.
+  const claims = statusRow.claims
+  if (!Array.isArray(claims) || claims.length === 0) {
+    return json(409, {
+      error: 'This lecture has no recorded claims, so there is nothing to check a diagnosis against. Re-run its analysis first.',
+    })
   }
 
   // Parse FIRST, write second. A failed parse must leave no row behind —

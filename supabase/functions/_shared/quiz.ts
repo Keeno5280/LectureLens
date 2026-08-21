@@ -14,6 +14,16 @@ export interface ParseSource {
  * there is no reason to add an image we read exactly once.
  */
 export function buildParseInput(src: ParseSource): ContentBlock[] {
+  // Both supplied is a caller bug, not a preference to be resolved silently.
+  // Quietly picking `text` would send Claude a quiz the caller never meant to
+  // parse and discard a screenshot they did — and the confirm gate cannot
+  // catch that, because the table it renders is internally consistent.
+  // parse-quiz rejects this combination with a 400 before it ever gets here;
+  // this is the belt to that braces, for any other caller.
+  if (src.text !== undefined && src.imageBase64) {
+    throw new Error('Provide text or an image, not both.')
+  }
+
   if (src.text !== undefined) {
     if (!src.text.trim()) throw new Error('Pasted quiz text is empty.')
     return [{ type: 'text', text: src.text }]

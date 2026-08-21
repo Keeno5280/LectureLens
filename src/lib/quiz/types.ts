@@ -2,16 +2,24 @@
 // rather than imported because tsconfig.app.json has "include": ["src"] and
 // the _shared modules are Deno-flavoured (explicit .ts import extensions).
 // If the schema changes, change this file with it.
+//
+// CONFUSION_TAGS is a runtime array rather than a bare type union so the
+// duplication is *checked* rather than merely documented: confusion-tags.test.ts
+// asserts it deep-equals the zod enum in _shared/schemas.ts. A tag added on one
+// side and not the other would otherwise pass every gate and only show up as a
+// diagnosis the UI cannot label.
+export const CONFUSION_TAGS = [
+  'absolutizing-word',
+  'collapsed-distinction',
+  'answered-tone-not-claim',
+  'wrong-category',
+  'recall-gap',
+  'judgment-under-tension',
+  'misread-question',
+  'careless',
+] as const
 
-export type ConfusionTag =
-  | 'absolutizing-word'
-  | 'collapsed-distinction'
-  | 'answered-tone-not-claim'
-  | 'wrong-category'
-  | 'recall-gap'
-  | 'judgment-under-tension'
-  | 'misread-question'
-  | 'careless'
+export type ConfusionTag = (typeof CONFUSION_TAGS)[number]
 
 export type LectureCoverage = 'covered' | 'partial' | 'not-in-lecture'
 
@@ -45,6 +53,12 @@ export interface QuizReviewItem {
   diagnosis: Diagnosis | null
   confusion_tags: ConfusionTag[]
   lecture_coverage: LectureCoverage | null
+  /**
+   * How many quotes the model returned that could NOT be matched to this
+   * lecture and were thrown away. Non-zero means it fabricated citations —
+   * the only signal anyone gets that it did.
+   */
+  dropped_citations: number
   diagnosis_status: DiagnosisStatus
   diagnosis_error: string | null
 }
