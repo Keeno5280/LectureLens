@@ -40,6 +40,10 @@ Deno.serve(async (req) => {
   if (!lectureId) return json(400, { error: 'lectureId is required' })
   if (!text && !imageBase64) return json(400, { error: 'Provide either quiz text or an image.' })
   if (text && imageBase64) return json(400, { error: 'Provide text or an image, not both.' })
+  // Whitespace-only text is truthy, so it slips past the guard above and would
+  // otherwise reach buildParseInput, which throws — turning a client-supplied
+  // validation failure into a misleading 500. Catch it here as the 400 it is.
+  if (text && !text.trim()) return json(400, { error: 'Pasted quiz text is empty.' })
 
   if (imageBase64) {
     if (imageBase64.length > MAX_IMAGE_BASE64_LENGTH) {
@@ -99,6 +103,18 @@ Deno.serve(async (req) => {
     return json(500, { error: e instanceof Error ? e.message : String(e) })
   }
 
+  // A parse that found zero questions (e.g. a fully illegible screenshot) has
+  // nothing to review. Persisting a question-less row would be exactly the
+  // "review with no questions" the rollback below exists to prevent, so
+  // nothing is written at all. This is a genuine 200, not a 4xx: the request
+  // succeeded and the result is "no questions found" — supabase-js buries a
+  // non-2xx body in error.context, which would make the `unreadable`
+  // explanations (the entire value of this path) harder for the caller to
+  // read, not safer.
+  if (parsed.items.length === 0) {
+    return json(200, { reviewId: null, itemCount: 0, missCount: 0, unreadable: parsed.unreadable })
+  }
+
   const { data: review, error: reviewErr } = await admin.from('quiz_reviews').insert({
     lecture_id: lectureId,
     user_id: auth.userId,
@@ -115,27 +131,31 @@ Deno.serve(async (req) => {
     return json(500, { error: `Could not save the quiz: ${reviewErr?.message ?? 'no row returned'}` })
   }
 
-  if (parsed.items.length) {
-    const { error: itemsErr } = await admin.from('quiz_review_items').insert(
-      parsed.items.map((it) => ({
-        review_id: review.id,
-        position: it.position,
-        question_text: it.question_text,
-        question_type: it.question_type,
-        options: it.options,
-        student_answer: it.student_answer,
-        correct_answer: it.correct_answer,
-        is_correct: it.is_correct,
-        // 'not-applicable' is distinct from 'pending' on purpose: "nothing to
-        // diagnose here" and "not diagnosed yet" must never render alike.
-        diagnosis_status: it.is_correct ? 'not-applicable' : 'pending',
-      }))
-    )
-    if (itemsErr) {
-      // Roll the parent back rather than leaving a review with no questions in it.
-      await admin.from('quiz_reviews').delete().eq('id', review.id)
-      return json(500, { error: `Could not save the quiz questions: ${itemsErr.message}` })
-    }
+  const { error: itemsErr } = await admin.from('quiz_review_items').insert(
+    parsed.items.map((it) => ({
+      review_id: review.id,
+      position: it.position,
+      question_text: it.question_text,
+      question_type: it.question_type,
+      options: it.options,
+      student_answer: it.student_answer,
+      correct_answer: it.correct_answer,
+      is_correct: it.is_correct,
+      // 'not-applicable' is distinct from 'pending' on purpose: "nothing to
+      // diagnose here" and "not diagnosed yet" must never render alike.
+      diagnosis_status: it.is_correct ? 'not-applicable' : 'pending',
+    }))
+  )
+  if (itemsErr) {
+    // Roll the parent back rather than leaving a review with no questions in
+    // it. The delete's own {error} is checked too: on a double fault the
+    // response must still be an honest 500, but say so explicitly so the
+    // failure is legible to whoever has to clean up the orphaned row.
+    const { error: delErr } = await admin.from('quiz_reviews').delete().eq('id', review.id)
+    const message = delErr
+      ? `Could not save the quiz questions: ${itemsErr.message}. Cleanup of the partial review also failed: ${delErr.message}. Review ${review.id} may need manual deletion.`
+      : `Could not save the quiz questions: ${itemsErr.message}`
+    return json(500, { error: message })
   }
 
   return json(200, {
