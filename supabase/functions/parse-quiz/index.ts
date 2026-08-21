@@ -63,11 +63,16 @@ Deno.serve(async (req) => {
           const scoped = createClient(SUPABASE_URL, ANON_KEY, {
             global: { headers: { Authorization: `Bearer ${token}` } },
           })
-          const { data } = await scoped.auth.getUser()
+          const { data, error } = await scoped.auth.getUser()
+          // A transient error validating the token must not be indistinguishable
+          // from "no user" — that would surface as a misleading 401 instead of
+          // an honest 500. Throwing here is caught by the surrounding try/catch.
+          if (error) throw new Error(`Could not verify the caller's identity: ${error.message}`)
           return data.user ? { id: data.user.id } : null
         },
         getLecture: async (id) => {
-          const { data } = await admin.from('lectures').select('*').eq('id', id).maybeSingle()
+          const { data, error } = await admin.from('lectures').select('*').eq('id', id).maybeSingle()
+          if (error) throw new Error(`Could not look up the lecture: ${error.message}`)
           return data ?? null
         },
       },

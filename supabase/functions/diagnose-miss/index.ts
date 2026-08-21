@@ -40,14 +40,19 @@ Deno.serve(async (req) => {
           return data.user ? { id: data.user.id } : null
         },
         getItem: async (id) => {
-          const { data } = await admin.from('quiz_review_items')
+          const { data, error } = await admin.from('quiz_review_items')
             .select('id, review_id, is_correct, question_text, question_type, options, student_answer, correct_answer')
             .eq('id', id).maybeSingle()
+          // A transient DB error must not be indistinguishable from "not
+          // found" — that would surface as a false 404 instead of an honest
+          // 500. Throwing here is caught by the surrounding try/catch below.
+          if (error) throw new Error(`Could not look up the quiz item: ${error.message}`)
           return data ?? null
         },
         getReview: async (id) => {
-          const { data } = await admin.from('quiz_reviews')
+          const { data, error } = await admin.from('quiz_reviews')
             .select('id, user_id, lecture_id').eq('id', id).maybeSingle()
+          if (error) throw new Error(`Could not look up the quiz review: ${error.message}`)
           return data ?? null
         },
       },
@@ -66,10 +71,15 @@ Deno.serve(async (req) => {
   }
 
   const fail = async (message: string) => {
-    await admin.from('quiz_review_items').update({
+    const { error: failErr } = await admin.from('quiz_review_items').update({
       diagnosis_status: 'failed',
       diagnosis_error: message.slice(0, 500),
     }).eq('id', itemId)
+    // If this write itself fails, the item is stranded at 'diagnosing' while
+    // the caller sees a 500 — the UI's Retry is keyed off diagnosis_status,
+    // so silently discarding this error would defeat the failed state's
+    // entire purpose. The response is still the honest 500 either way.
+    if (failErr) console.error(`diagnose-miss: could not mark item ${itemId} failed`, failErr)
     return json(500, { error: message })
   }
 
@@ -82,10 +92,14 @@ Deno.serve(async (req) => {
       // The review as a whole cannot proceed — every remaining item would fail
       // the same way. This is the one case that marks the REVIEW failed rather
       // than just the item, so the UI stops offering a Retry that cannot work.
-      await admin.from('quiz_reviews').update({
+      const { error: revFailErr } = await admin.from('quiz_reviews').update({
         status: 'failed',
         processing_error: 'The lecture this quiz belongs to has been deleted.',
       }).eq('id', auth.review.id)
+      // If this write fails, the review is stranded permanently: every future
+      // call for it hits this same branch, so nothing ever retries it. At
+      // minimum this must be logged rather than silently swallowed.
+      if (revFailErr) console.error(`diagnose-miss: could not mark review ${auth.review.id} failed`, revFailErr)
       return await fail('The lecture this quiz belongs to no longer exists.')
     }
 
