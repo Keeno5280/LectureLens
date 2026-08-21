@@ -182,6 +182,24 @@ LectureDetailPage (analysis completed) → "Diagnose a quiz" → QuizReviewPage
   `npm run build` — passes
 - Edge functions deployed: `parse-quiz` v4, `diagnose-miss` v3, both `verify_jwt` + import map
 
+### Verified in a real browser (2026-08-21)
+
+End-to-end run against lecture "bbb", 4-question quiz, all 4 marked missed. Confirmed from the
+database, not from the UI's own claims:
+
+- **CORS works** — the browser reached both `parse-quiz` and `diagnose-miss` and got responses.
+  This is the check `curl` cannot make.
+- **Fan-out cap held live** — caught mid-run with exactly 3 items `diagnosing` and 1 `pending`,
+  then the queue drained. Concurrency 3 is real, and the queued card state has something to show.
+- **Honesty guarantee held** — all 3 questions the lecture does not cover returned
+  `lecture_coverage: 'not-in-lecture'` with **0 citations** and **0 dropped**.
+- **The control discriminated** — the one question the slides DO cover returned `covered` with
+  3 citations, so the feature is not simply always saying "not covered".
+- **Those 3 citations were verified verbatim against `lectures.claims` by independent SQL** —
+  substring match after whitespace/case normalization, all 3 found. Citations shown to a student
+  are genuinely their lecturer's words.
+- **Server-side roll-up worked** — review reached `status: 'completed'` on its own.
+
 ### What still needs your eyes
 
 React components have no automated tests (no jsdom). These need a real browser:
