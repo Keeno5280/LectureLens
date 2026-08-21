@@ -6,8 +6,10 @@ import { useNavigate } from '../hooks/useNavigate';
 import QuizPasteForm, { type QuizSource } from '../components/quiz/QuizPasteForm';
 import ParsedQuizTable from '../components/quiz/ParsedQuizTable';
 import DiagnosisCard from '../components/quiz/DiagnosisCard';
+import PatternPanel from '../components/quiz/PatternPanel';
 import { diagnoseAll } from '../lib/quiz/diagnose';
 import { reconcileAfterRun } from '../lib/quiz/reconcile';
+import { summarizeTags } from '../lib/quiz/patterns';
 import type { QuizReviewItem } from '../lib/quiz/types';
 
 interface Props { lectureId: string }
@@ -55,6 +57,25 @@ async function readInvokeErrorMessage(error: unknown): Promise<string> {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The class-scoped picture used to feed `PatternPanel`, loaded once per
+ * visit to the results stage — see `loadClassPattern` below.
+ *
+ * Deliberately excludes the current review's own items: those are already
+ * live in `items` state (patched as the fan-out runs), so folding them in
+ * here would either duplicate them or go stale mid-run. The panel merges
+ * `items` with `siblingItems` at render time instead.
+ *
+ * `classPattern === null` means "hide the panel" — either nothing has
+ * loaded yet, or one of the queries in `loadClassPattern` failed. The panel
+ * is supplementary; a failure here must never touch `items` or `error`.
+ */
+interface ClassPatternMeta {
+  classScoped: boolean;
+  className: string | null;
+  siblingItems: Pick<QuizReviewItem, 'review_id' | 'position' | 'diagnosis_status' | 'confusion_tags'>[];
+}
+
 export default function QuizReviewPage({ lectureId }: Props) {
   const navigate = useNavigate();
   const [reviewId, setReviewId] = useState<string | null>(null);
@@ -66,6 +87,7 @@ export default function QuizReviewPage({ lectureId }: Props) {
   const [listLoading, setListLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [classPattern, setClassPattern] = useState<ClassPatternMeta | null>(null);
 
   /** Fetch only — the caller decides what to do with the rows. */
   const fetchItems = useCallback(async (id: string): Promise<QuizReviewItem[] | null> => {
@@ -74,6 +96,100 @@ export default function QuizReviewPage({ lectureId }: Props) {
     if (err) { setError(`Could not load the quiz: ${err.message}`); return null; }
     return (data ?? []) as QuizReviewItem[];
   }, []);
+
+  /**
+   * Loads the rest of the class-scoped picture for the pattern panel:
+   * this lecture's `class_id`, the class's name, every OTHER lecture in
+   * that class, every quiz review on any of them, and those reviews' items.
+   *
+   * The join is `quiz_reviews.lecture_id -> lectures.class_id`, walked
+   * explicitly in that order rather than as one clever query — each step is
+   * a single round trip, easy to fail honestly at, and never touches
+   * `quiz_reviews.status`.
+   *
+   * Sets `error`/`items` NEVER. This whole function only ever writes
+   * `classPattern`, and on any failure it writes `null` (hide the panel) —
+   * a supplementary query breaking here must not touch the diagnoses.
+   */
+  const loadClassPattern = useCallback(async (currentReviewId: string): Promise<void> => {
+    const { data: lecture, error: lecErr } = await supabase
+      .from('lectures').select('class_id').eq('id', lectureId).maybeSingle();
+    if (lecErr || !lecture) {
+      console.error('[QuizReviewPage] could not read this lecture\'s class', lecErr);
+      setClassPattern(null);
+      return;
+    }
+
+    // Rule 1: no class on this lecture means nothing to pool with. Fall
+    // back to this quiz alone rather than guessing, and say so in the UI.
+    if (!lecture.class_id) {
+      setClassPattern({ classScoped: false, className: null, siblingItems: [] });
+      return;
+    }
+
+    const { data: classRow, error: classErr } = await supabase
+      .from('classes').select('name').eq('id', lecture.class_id).maybeSingle();
+    if (classErr) {
+      console.error('[QuizReviewPage] could not read this class\'s name', classErr);
+      setClassPattern(null);
+      return;
+    }
+
+    const { data: classLectures, error: lecturesErr } = await supabase
+      .from('lectures').select('id').eq('class_id', lecture.class_id);
+    if (lecturesErr) {
+      console.error('[QuizReviewPage] could not read this class\'s lectures', lecturesErr);
+      setClassPattern(null);
+      return;
+    }
+
+    const lectureIds = (classLectures ?? []).map((l) => l.id as string);
+
+    const { data: classReviews, error: reviewsErr } = await supabase
+      .from('quiz_reviews').select('id').in('lecture_id', lectureIds);
+    if (reviewsErr) {
+      console.error('[QuizReviewPage] could not read this class\'s quiz reviews', reviewsErr);
+      setClassPattern(null);
+      return;
+    }
+
+    const siblingReviewIds = (classReviews ?? [])
+      .map((r) => r.id as string)
+      .filter((id) => id !== currentReviewId);
+
+    // Just this one quiz in the class so far. Legitimate, not a failure —
+    // describePattern will say plainly that it's too early at quizCount 1.
+    if (siblingReviewIds.length === 0) {
+      setClassPattern({ classScoped: true, className: classRow?.name ?? null, siblingItems: [] });
+      return;
+    }
+
+    const { data: siblingItemRows, error: itemsErr } = await supabase
+      .from('quiz_review_items')
+      .select('review_id, position, diagnosis_status, confusion_tags')
+      .in('review_id', siblingReviewIds);
+    if (itemsErr) {
+      console.error('[QuizReviewPage] could not read this class\'s quiz items', itemsErr);
+      setClassPattern(null);
+      return;
+    }
+
+    setClassPattern({
+      classScoped: true,
+      className: classRow?.name ?? null,
+      siblingItems: (siblingItemRows ?? []) as ClassPatternMeta['siblingItems'],
+    });
+  }, [lectureId]);
+
+  // Loaded once per visit to the results stage, not reactively re-fetched as
+  // the fan-out patches `items` — see ClassPatternMeta. Cleared immediately
+  // on entry so a stale panel from a previously-viewed review can never
+  // flash under a different one while the fresh load is in flight.
+  useEffect(() => {
+    if (stage !== 'results' || !reviewId) { setClassPattern(null); return; }
+    setClassPattern(null);
+    void loadClassPattern(reviewId);
+  }, [stage, reviewId, loadClassPattern]);
 
   /**
    * Without this the feature was write-only. The page always mounted on the
@@ -313,6 +429,20 @@ export default function QuizReviewPage({ lectureId }: Props) {
 
   const misses = items.filter((i) => !i.is_correct);
 
+  // Merges this review's own (live) items with the rest of the class,
+  // loaded separately by loadClassPattern — see ClassPatternMeta for why
+  // they're kept apart until now. `classPattern === null` means the panel
+  // is hidden, so these are unused in that case.
+  const patternCounts = classPattern ? summarizeTags([...items, ...classPattern.siblingItems]) : [];
+  const patternQuizCount = classPattern
+    ? (items.some((i) => i.diagnosis_status === 'completed') ? 1 : 0) +
+      new Set(
+        classPattern.siblingItems
+          .filter((i) => i.diagnosis_status === 'completed')
+          .map((i) => i.review_id),
+      ).size
+    : 0;
+
   // No auto-reload effect on 'results': a `select` fired the instant `stage`
   // becomes 'results' races diagnose-miss's edge-function round trip and
   // reliably reads back 'pending'/'diagnosing' rows *before* the DB reflects
@@ -421,6 +551,14 @@ export default function QuizReviewPage({ lectureId }: Props) {
 
       {stage === 'results' && (
         <>
+          {classPattern && (
+            <PatternPanel
+              counts={patternCounts}
+              quizCount={patternQuizCount}
+              classScoped={classPattern.classScoped}
+              className={classPattern.className}
+            />
+          )}
           <div className="bg-white rounded-2xl shadow-md p-6">
             <h2 className="text-xl font-semibold">
               {items.filter((i) => i.diagnosis_status === 'completed').length} of {misses.length} diagnosed
