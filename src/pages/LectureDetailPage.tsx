@@ -454,6 +454,22 @@ export default function LectureDetailPage({ lectureId }: { lectureId: string }) 
             </div>
           ) : lecture.processing_status === 'completed' ? (
             <>
+              <div className="bg-white rounded-2xl shadow-md p-6 flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Got a question wrong?</h2>
+                  <p className="text-sm text-gray-600">
+                    Paste the quiz you took and find out why — quoted from this lecture.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate('quiz-review', lectureId)}
+                  className="shrink-0 bg-blue-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-blue-700"
+                >
+                  Diagnose a quiz
+                </button>
+              </div>
+
               {lecture.summary_overview && (
                 <div className="bg-white rounded-2xl shadow-md p-8">
                   <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">

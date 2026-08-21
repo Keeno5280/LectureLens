@@ -9,11 +9,12 @@ import LectureDetailPage from './pages/LectureDetailPage';
 import SlideViewerPage from './pages/SlideViewerPage';
 import TutorPage from './pages/TutorPage';
 import UpdatePasswordPage from './pages/UpdatePasswordPage';
+import QuizReviewPage from './pages/QuizReviewPage';
 import { supabase } from './lib/supabase';
 import { SemesterProvider } from './contexts/SemesterContext';
 import Layout from './components/Layout';
 
-type Page = 'dashboard' | 'upload' | 'classes' | 'class-notes' | 'lecture' | 'slide-viewer' | 'tutor' | 'update-password';
+type Page = 'dashboard' | 'upload' | 'classes' | 'class-notes' | 'lecture' | 'slide-viewer' | 'tutor' | 'update-password' | 'quiz-review';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -71,6 +72,8 @@ export default function App() {
         return pageId ? <ClassNotesPage classId={pageId} /> : <Dashboard />;
       case 'lecture':
         return pageId ? <LectureDetailPage lectureId={pageId} /> : <Dashboard />;
+      case 'quiz-review':
+        return pageId ? <QuizReviewPage lectureId={pageId} /> : <Dashboard />;
       case 'slide-viewer':
         return <SlideViewerPage />;
       case 'tutor':
