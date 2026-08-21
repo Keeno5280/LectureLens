@@ -200,6 +200,23 @@ database, not from the UI's own claims:
   are genuinely their lecturer's words.
 - **Server-side roll-up worked** — review reached `status: 'completed'` on its own.
 
+### Quiz pattern panel (added 2026-08-21, post-plan)
+
+Above the diagnosis cards, `PatternPanel` shows what the misses have in common — the layer
+`review.md` calls "worth more than any single answer".
+
+- **Class-scoped.** Aggregates only across reviews whose lecture shares this lecture's
+  `class_id`. A lecture with no class falls back to that quiz alone and says so.
+- **Refuses to call a pattern below 3 quizzes** (`MIN_QUIZZES_FOR_PATTERN`), per this project's
+  own standard. Counts are always shown; the *pattern* claim is withheld. Do not soften this
+  into "possible pattern" language — the refusal is the feature.
+- `src/lib/quiz/patterns.ts` is pure and tested. `summarizeTags` returns
+  `{counts, diagnosedItemCount}` from a single pass **on purpose**: an earlier version computed
+  the majority denominator as the sum of tag counts (tag *instances*), which made a pattern
+  mathematically unreachable at the real ~3-tags-per-diagnosis rate, and mislabelled "4 of 12"
+  to students who had missed 4 questions. Keep the two numbers coming from one pass.
+- Never reads `quiz_reviews.status` — see rule 12.
+
 ### What still needs your eyes
 
 React components have no automated tests (no jsdom). These need a real browser:
