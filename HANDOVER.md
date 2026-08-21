@@ -115,7 +115,94 @@ and says "No lecture content was provided." The old code produced 17 flashcards 
 
 ---
 
-## Phase 2 — the actual point
+## Phase 2 — BUILT (2026-08-20), pending browser verification
+
+Quiz-miss diagnosis is implemented, deployed, and reviewed. **It has not yet been verified in a
+real browser** — see *What still needs your eyes* below. `curl` does not test CORS.
+
+### What it does
+
+```
+LectureDetailPage (analysis completed) → "Diagnose a quiz" → QuizReviewPage
+   ↓ lists this lecture's prior reviews, or start a new one
+   ↓ paste the graded quiz as text, or drop a screenshot (≤5MB, never stored)
+   supabase.functions.invoke('parse-quiz')
+   ↓ JWT → lecture ownership → service-role → Claude (structure ONLY, no judgement)
+   ↓ rows in quiz_reviews + quiz_review_items
+   ↓
+   THE CONFIRM GATE — you check which answer was yours and which was correct.
+   Nothing is diagnosed until you do. The friction is the feature.
+   ↓
+   browser fans out one invoke('diagnose-miss') per MISSED question, ≤3 concurrent
+   ↓ JWT → item → review → LECTURE ownership → service-role
+   ↓ Claude: full review.md-depth diagnosis
+   ↓ verifyCitations() drops any quote not found in the transcript or a stored claim
+   ↓ quiz_review_items.diagnosis
+```
+
+| Path | Role |
+|---|---|
+| `supabase/functions/parse-quiz/index.ts` | Paste/screenshot → structured rows. Never diagnoses |
+| `supabase/functions/diagnose-miss/index.ts` | One missed question → one verified diagnosis |
+| `supabase/functions/_shared/citations.ts` | **Verifies quotes against the real source.** The anti-fabrication guarantee |
+| `supabase/functions/_shared/quiz.ts` | `buildParseInput`/`parseQuiz`, `buildDiagnosisInput`/`diagnoseMiss` |
+| `supabase/functions/_shared/auth.ts` | `authorizeQuizItemAccess` — item → review → lecture → owner |
+| `src/lib/quiz/diagnose.ts` | Concurrency-capped fan-out, per-item failure |
+| `src/lib/quiz/reconcile.ts` | The fan-out — not the DB — is the authority on what failed |
+| `src/pages/QuizReviewPage.tsx` | The three stages plus the review list |
+
+### Rules Phase 2 adds
+
+9. **Citations are verified in code, never trusted to the prompt.** `verifyCitations` drops any
+   quote not found verbatim in the transcript or a stored claim. `lecture_coverage:
+   'not-in-lecture'` forces zero citations *in code*. A fabricated quote attributed to a
+   student's own lecturer is the worst thing this feature can produce — they came here *because*
+   they don't know the material, so they cannot catch it.
+10. **`slides` lectures have no transcript.** `claims[].quote` is their only verification
+    corpus. Narrower, deliberately.
+11. **Never `npx supabase db push` in this repo.** Local and remote migration histories are out
+    of sync by nine migrations; `db push` applies all of them, including
+    `20250101000001_disable_rls_for_testing.sql`, which runs `ALTER TABLE lectures DISABLE ROW
+    LEVEL SECURITY` on the live project. Use `apply_migration` (MCP) for one migration at a time.
+12. **Nothing reads `quiz_reviews.status`.** Two known consistency gaps in that column are
+    parked *on that basis*. The review list derives every count from `quiz_review_items`. If you
+    ever read that column, fix both gaps first (see the Phase 3 table).
+13. **The auth walk goes all the way to the lecture.** `item → review → lecture → owner`. A
+    shipped IDOR came from stopping at the review: `quiz_reviews.lecture_id` was client-mutable
+    under RLS, so a user could re-point their own review at someone else's lecture and have it
+    quoted into their own readable row. Fixed in `_shared/auth.ts` **and** by the
+    `quiz_reviews_freeze_ownership` trigger. Don't remove either.
+
+### Verified by automated gates
+
+- `npm test` — **154 tests**, including the citation verifier's fabrication and boundary cases,
+  the auth walk's foreign-lecture 403, the fan-out's concurrency cap and both failure paths, and
+  a drift guard tying `src/lib/quiz/types.ts`'s confusion tags to `_shared/schemas.ts`
+- `npm run typecheck:shared` — 0 · `npm run typecheck` — 12 (the pre-existing baseline) ·
+  `npm run build` — passes
+- Edge functions deployed: `parse-quiz` v4, `diagnose-miss` v3, both `verify_jwt` + import map
+
+### What still needs your eyes
+
+React components have no automated tests (no jsdom). These need a real browser:
+
+1. **The honesty test.** Paste a quiz whose questions the lecture never covered. Every diagnosis
+   must come back `not-in-lecture`, with **zero citations**, and say so. A confident, well-cited
+   answer here means the feature has failed, however good the prose.
+2. **Citations are real.** Pick a quote from a diagnosis and find it in `lectures.claims`.
+3. **The IDOR is closed.** As user A, re-point a review's `lecture_id` at user B's lecture — the
+   DB should now reject it — then invoke `diagnose-miss`; expect 403.
+4. **Mid-run rendering** with 5+ misses: queued and fetching cards, never a blank page.
+5. **A forced failure** lands on a card with a working Retry, and the header reads
+   "N of M diagnosed · K failed" — never a bare success.
+6. **CORS.** It only counts in a browser.
+
+**Only completed lecture today:** "bbb" (`f160e207-…`), a **slides** deck — 20 claims, 7
+distinctions, no transcript. So your first test exercises the narrower citation path.
+
+---
+
+## Phase 2 — the original brief
 
 **Quiz-miss diagnosis.** The differentiator, and the reason `claims` and `distinctions` exist.
 
