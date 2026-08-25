@@ -217,6 +217,18 @@ Above the diagnosis cards, `PatternPanel` shows what the misses have in common �
   to students who had missed 4 questions. Keep the two numbers coming from one pass.
 - Never reads `quiz_reviews.status` — see rule 12.
 
+### `confusion_tags` has a ninth member: `'other'`
+
+Added 2026-08-24 after a live failure. The closed 8-value enum meant a model reaching for a
+label outside it got its ENTIRE diagnosis rejected by zod — a complete, paid-for explanation
+discarded over one tag. `'other'` gives it somewhere legitimate to land while keeping the
+vocabulary closed (an invented tag is still rejected; there is a test).
+
+**`'other'` is counted and displayed but can never be the dominant confusion** — see
+`patterns.ts`. A student whose top tag is "other" has learned nothing actionable; a rising
+`'other'` count means the vocabulary needs extending, which is a signal for you, not for them.
+Do not "fix" this by letting it win.
+
 ### What still needs your eyes
 
 React components have no automated tests (no jsdom). These need a real browser:
