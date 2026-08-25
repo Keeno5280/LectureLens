@@ -169,6 +169,33 @@ describe('describePattern', () => {
     expect(out.isPattern).toBe(false)
   })
 
+  // 'other' means the model reached for the vocabulary's escape hatch — that
+  // is a signal the TAG LIST is inadequate, not a habit the student can act
+  // on. A high 'other' count must still show up in the breakdown (that is
+  // `summarizeTags`'s job, tested above), but it must never win `dominant`
+  // here, and therefore can never itself back `isPattern: true` — even when
+  // it is the single highest-count tag.
+  it("excludes 'other' from dominant even when it has the highest count, and picks the real runner-up instead", () => {
+    const counts = [
+      { tag: 'other' as const, count: 5, positions: [1, 2, 3, 4, 5] },
+      { tag: 'careless' as const, count: 4, positions: [6, 7, 8, 9] },
+    ]
+    const out = describePattern({ counts, diagnosedItemCount: 9 }, 3)
+
+    expect(out.dominant?.tag).toBe('careless')
+    expect(out.dominant?.count).toBe(4)
+  })
+
+  it("never reports a dominant tag or a pattern when 'other' is the only tag present, and says so honestly (not 'nothing diagnosed yet')", () => {
+    const counts = [{ tag: 'other' as const, count: 4, positions: [1, 2, 3, 4] }]
+    const out = describePattern({ counts, diagnosedItemCount: 4 }, 3)
+
+    expect(out.dominant).toBeNull()
+    expect(out.isPattern).toBe(false)
+    expect(out.note).not.toBe('Nothing diagnosed yet — no pattern to show.')
+    expect(out.note).toMatch(/other/i)
+  })
+
   // REGRESSION (caught in review): real diagnoses here commonly carry more
   // than one confusion_tag per miss. A tag that is unanimous across every
   // diagnosed ITEM must count as a majority even though each item also

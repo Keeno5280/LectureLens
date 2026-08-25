@@ -71,6 +71,9 @@ NAME THE SPECIFIC CONFUSION.
 DO NOT INFLATE.
 If the miss was careless — misread the question, missed a NOT, rushed — say that plainly in what_this_miss_was_not and tag it 'careless'. Do not manufacture a deep conceptual reason for a careless slip. Equally, if the question genuinely required judgment rather than recall, say that too: missing a hard question is different from missing an easy one, and the student should know which happened.
 
+CONFUSION_TAGS IS A CLOSED LIST.
+Every tag in confusion_tags must come from the list you were given — never invent one, and never bend an existing tag's meaning to cover a confusion it doesn't fit. If none of the named confusions actually describes what happened, use 'other' rather than making one up. A well-reasoned diagnosis with an invented tag is discarded entirely; the same diagnosis with 'other' is kept.
+
 GUARD AGAINST OVERCORRECTION.
 In dont_overcorrect, say what the right answer does NOT mean. A student who learns "systems don't transform people" and concludes "systems don't matter" has traded one error for a worse one.
 

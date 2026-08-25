@@ -122,6 +122,16 @@ describe('DiagnosisSchema', () => {
     expect(() => DiagnosisSchema.parse(d)).toThrow()
   })
 
+  it("accepts 'other' as a confusion tag — the escape hatch for when nothing in the closed vocabulary fits", () => {
+    const d = { ...validDiagnosis, confusion_tags: ['other' as const] }
+    expect(() => DiagnosisSchema.parse(d)).not.toThrow()
+  })
+
+  it('still rejects a genuinely invented tag now that other exists — the enum stays closed', () => {
+    const d = { ...validDiagnosis, confusion_tags: ['absolutizing-word', 'made-up-tag'] }
+    expect(() => DiagnosisSchema.parse(d)).toThrow()
+  })
+
   it('rejects an empty confusion_tags array — an untagged miss is invisible to the pattern pass', () => {
     expect(() => DiagnosisSchema.parse({ ...validDiagnosis, confusion_tags: [] })).toThrow()
   })

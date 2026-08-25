@@ -108,13 +108,26 @@ export interface PatternSummary {
  *
  * The majority denominator is `summary.diagnosedItemCount`, never a sum of
  * `TagCount.count` — see `TagSummary` for why that sum is the wrong number.
+ *
+ * `'other'` is excluded from `dominant` even when it is the highest-count
+ * tag. A student whose top confusion is "other" has learned nothing
+ * actionable — a high `'other'` count means the closed vocabulary is
+ * missing something, not that the student has a fixable habit. It is still
+ * counted and shown in `summary.counts`; it can just never win here, and so
+ * can never back an `isPattern: true` claim either.
  */
 export function describePattern(summary: TagSummary, quizCount: number): PatternSummary {
   const { counts, diagnosedItemCount } = summary
-  const dominant = counts[0] ?? null
+  const dominant = counts.find((c) => c.tag !== 'other') ?? null
 
   if (dominant === null) {
-    return { dominant: null, isPattern: false, note: 'Nothing diagnosed yet — no pattern to show.' }
+    // Empty input and "every diagnosed miss was tagged 'other'" both land
+    // here, but they are not the same claim — the latter has diagnosed
+    // items and an honest note must not imply otherwise.
+    const note = diagnosedItemCount === 0
+      ? 'Nothing diagnosed yet — no pattern to show.'
+      : "Every diagnosed miss so far was tagged 'other' — the tag list doesn't cover what's going wrong yet. Not a pattern to show."
+    return { dominant: null, isPattern: false, note }
   }
 
   const isMajority = dominant.count * 2 > diagnosedItemCount

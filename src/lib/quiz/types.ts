@@ -17,6 +17,7 @@ export const CONFUSION_TAGS = [
   'judgment-under-tension',
   'misread-question',
   'careless',
+  'other',
 ] as const
 
 export type ConfusionTag = (typeof CONFUSION_TAGS)[number]

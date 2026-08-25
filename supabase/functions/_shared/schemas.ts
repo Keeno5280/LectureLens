@@ -49,6 +49,8 @@ export const CONFUSION_TAGS = [
   'judgment-under-tension',   // had to hold two true things and spot which was tested
   'misread-question',         // missed a NOT / EXCEPT / "which is false"
   'careless',                 // no conceptual issue
+  'other',                    // none of the above fit — the escape hatch. Never the
+                               // basis of a dominant-tag pattern claim; see patterns.ts.
 ] as const
 
 export const ParsedQuizItemSchema = z.object({
